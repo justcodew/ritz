@@ -1,0 +1,19 @@
+[package]
+name = "mupdf-sys"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+links = "mupdf"
+description = "Raw FFI bindings to MuPDF C library"
+
+[features]
+# 默认使用预生成的 bindings.rs（CI 无需 libclang）
+# 启用此 feature 重新生成绑定
+bindgen = ["dep:bindgen"]
+
+[dependencies]
+
+[build-dependencies]
+cc = "1.0"
+bindgen = { version = "0.69", optional = true }
