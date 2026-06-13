@@ -61,6 +61,8 @@ int mupdf_safe_stext_to_html(fz_context *ctx, fz_stext_page *stpage,
                              char **out, size_t *out_len);
 int mupdf_safe_stext_to_xml(fz_context *ctx, fz_stext_page *stpage,
                             char **out, size_t *out_len);
+int mupdf_safe_stext_to_xhtml(fz_context *ctx, fz_stext_page *stpage,
+                              char **out, size_t *out_len);
 /* json: scale 是坐标缩放因子（PyMuPDF 用 1.0） */
 int mupdf_safe_stext_to_json(fz_context *ctx, fz_stext_page *stpage, float scale,
                              char **out, size_t *out_len);

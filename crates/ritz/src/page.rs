@@ -7,8 +7,8 @@ use mupdf_sys::{
     mupdf_safe_drop_page, mupdf_safe_drop_stext_page, mupdf_safe_load_links,
     mupdf_safe_new_stext_page, mupdf_safe_render_pixmap, mupdf_safe_stext_to_blocks,
     mupdf_safe_stext_to_dict, mupdf_safe_stext_to_html, mupdf_safe_stext_to_json,
-    mupdf_safe_stext_to_text, mupdf_safe_stext_to_words, mupdf_safe_stext_to_xml, fz_pixmap,
-    fz_stext_page,
+    mupdf_safe_stext_to_text, mupdf_safe_stext_to_words, mupdf_safe_stext_to_xml,
+    mupdf_safe_stext_to_xhtml, fz_pixmap, fz_stext_page,
 };
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -91,14 +91,14 @@ impl PyPage {
         }
 
         let result = match mode {
-            "text" | "html" | "xml" => self.stext_to_string(py, stpage, mode),
+            "text" | "html" | "xhtml" | "xml" => self.stext_to_string(py, stpage, mode),
             "json" => self.stext_to_json(py, stpage, 1.0),
             "words" => self.stext_to_words(py, stpage),
             "blocks" => self.stext_to_blocks(py, stpage),
             "dict" => self.stext_to_dict(py, stpage, false),
             "rawdict" => self.stext_to_dict(py, stpage, true),
             other => Err(PyRuntimeError::new_err(format!(
-                "unsupported text mode: '{}' (supported: text, html, xml, json, words, blocks, dict, rawdict)",
+                "unsupported text mode: '{}' (supported: text, html, xhtml, xml, json, words, blocks, dict, rawdict)",
                 other
             ))),
         };
@@ -205,6 +205,7 @@ impl PyPage {
             match mode {
                 "text" => mupdf_safe_stext_to_text(self.ctx, stpage, &mut ptr, &mut len),
                 "html" => mupdf_safe_stext_to_html(self.ctx, stpage, &mut ptr, &mut len),
+                "xhtml" => mupdf_safe_stext_to_xhtml(self.ctx, stpage, &mut ptr, &mut len),
                 "xml" => mupdf_safe_stext_to_xml(self.ctx, stpage, &mut ptr, &mut len),
                 _ => unreachable!(),
             }

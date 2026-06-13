@@ -186,6 +186,13 @@ extern "C" {
         out_len: *mut usize,
     ) -> std::os::raw::c_int;
 
+    pub fn mupdf_safe_stext_to_xhtml(
+        ctx: *mut fz_context,
+        stpage: *mut fz_stext_page,
+        out: *mut *mut std::os::raw::c_char,
+        out_len: *mut usize,
+    ) -> std::os::raw::c_int;
+
     pub fn mupdf_safe_stext_to_json(
         ctx: *mut fz_context,
         stpage: *mut fz_stext_page,

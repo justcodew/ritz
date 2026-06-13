@@ -327,6 +327,11 @@ int mupdf_safe_stext_to_xml(fz_context *ctx, fz_stext_page *stpage,
     return stext_to_buffer(ctx, stpage, fz_print_stext_page_as_xml, out, out_len);
 }
 
+int mupdf_safe_stext_to_xhtml(fz_context *ctx, fz_stext_page *stpage,
+                              char **out, size_t *out_len) {
+    return stext_to_buffer(ctx, stpage, fz_print_stext_page_as_xhtml, out, out_len);
+}
+
 /*
  * JSON 模式：fz_print_stext_page_as_json 签名为 (ctx, out, page, float scale)，
  * 与 text/html/xml 都不同，所以单独实现。
