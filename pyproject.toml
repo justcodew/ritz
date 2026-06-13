@@ -1,0 +1,28 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "ritz"
+version = "0.1.0"
+description = "fitz, reforged in Rust — 高性能 PDF 处理库"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "AGPL-3.0-only" }
+authors = [{ name = "justcodew" }]
+keywords = ["pdf", "mupdf", "pymupdf"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU Affero General Public License v3",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[tool.maturin]
+# Python 包名：ritz/；Rust cdylib 输出：_ritz.*
+python-source = "python"
+manifest-path = "crates/ritz/Cargo.toml"
+module-name = "ritz._ritz"
+features = ["pyo3/extension-module"]

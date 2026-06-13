@@ -1,11 +1,23 @@
-//! ritz — fitz, reforged in Rust.
+//! ritz PyO3 绑定：PyMuPDF 兼容 API。
 //!
-//! 高层 Rust API + PyO3 Python 绑定。
-//! 阶段一为桩，阶段二起填充 PyO3 类和 get_text 等方法。
+//! 暴露给 Python 的模块名是 `_ritz`（与 PyMuPDF 的 `_fitz` 对应）。
+//! Python 侧用 `ritz/__init__.py` re-export。
 
-pub use mupdf;
+use pyo3::prelude::*;
 
-/// 占位：阶段二将替换为 #[pymodule] ritz。
-pub fn version() -> &'static str {
-    "0.1.0-phase1"
+mod document;
+mod page;
+mod pixmap;
+
+pub use document::PyDocument;
+pub use page::PyPage;
+pub use pixmap::PyPixmap;
+
+#[pymodule]
+fn _ritz(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    m.add_class::<PyDocument>()?;
+    m.add_class::<PyPage>()?;
+    m.add_class::<PyPixmap>()?;
+    Ok(())
 }
