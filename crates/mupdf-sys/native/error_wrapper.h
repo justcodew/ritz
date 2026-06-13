@@ -102,10 +102,17 @@ int mupdf_safe_stext_to_blocks(fz_context *ctx, fz_stext_page *stpage,
  *         [font_len: i32][font bytes]
  *         [text_len: i32][text bytes]
  *
- * chars 信息（rawdict 模式）后续扩展。
+ *
+ * include_chars != 0 时（rawdict 模式），在每个 span 的 text 之后追加：
+ *   [char_count: i32]
+ *   for each char:
+ *     [bbox: 4 floats]   // char quad 包围盒
+ *     [origin: 2 floats] // baseline 上的参考点
+ *     [utf8_len: i32][utf8 bytes]
+ * 对应 PyMuPDF rawdict 中 span["chars"] = [{"bbox":.., "origin":.., "c":..}]。
  */
 int mupdf_safe_stext_to_dict(fz_context *ctx, fz_stext_page *stpage,
-                             char **out, size_t *out_len);
+                             int include_chars, char **out, size_t *out_len);
 
 /* ---- 像素图（pixmap）渲染 ---- */
 /* zoom=1.0 为原始 DPI(72)，alpha=1 带透明通道 */

@@ -213,6 +213,7 @@ extern "C" {
     pub fn mupdf_safe_stext_to_dict(
         ctx: *mut fz_context,
         stpage: *mut fz_stext_page,
+        include_chars: std::os::raw::c_int,
         out: *mut *mut std::os::raw::c_char,
         out_len: *mut usize,
     ) -> std::os::raw::c_int;

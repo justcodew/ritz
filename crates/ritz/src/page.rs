@@ -95,9 +95,10 @@ impl PyPage {
             "json" => self.stext_to_json(py, stpage, 1.0),
             "words" => self.stext_to_words(py, stpage),
             "blocks" => self.stext_to_blocks(py, stpage),
-            "dict" => self.stext_to_dict(py, stpage),
+            "dict" => self.stext_to_dict(py, stpage, false),
+            "rawdict" => self.stext_to_dict(py, stpage, true),
             other => Err(PyRuntimeError::new_err(format!(
-                "unsupported text mode: '{}' (supported: text, html, xml, json, words, blocks, dict)",
+                "unsupported text mode: '{}' (supported: text, html, xml, json, words, blocks, dict, rawdict)",
                 other
             ))),
         };
@@ -342,11 +343,25 @@ impl PyPage {
         result
     }
 
-    /// dict 模式：解析 C 层二进制 buffer，构造 PyMuPDF 兼容嵌套 dict。
-    fn stext_to_dict(&self, py: Python<'_>, stpage: *mut fz_stext_page) -> PyResult<Py<PyAny>> {
+    /// dict / rawdict 模式：解析 C 层二进制 buffer，构造 PyMuPDF 兼容嵌套 dict。
+    /// include_chars=true 时（rawdict）每个 span 额外包含 chars 列表。
+    fn stext_to_dict(
+        &self,
+        py: Python<'_>,
+        stpage: *mut fz_stext_page,
+        include_chars: bool,
+    ) -> PyResult<Py<PyAny>> {
         let mut ptr: *mut c_char = ptr::null_mut();
         let mut total_len: usize = 0;
-        let rc = unsafe { mupdf_safe_stext_to_dict(self.ctx, stpage, &mut ptr, &mut total_len) };
+        let rc = unsafe {
+            mupdf_safe_stext_to_dict(
+                self.ctx,
+                stpage,
+                if include_chars { 1 } else { 0 },
+                &mut ptr,
+                &mut total_len,
+            )
+        };
         if rc != 0 {
             return Err(PyDocument::last_error_pub());
         }
@@ -444,6 +459,30 @@ impl PyPage {
                             span_dict.set_item("size", size)?;
                             span_dict.set_item("font", font)?;
                             span_dict.set_item("text", text)?;
+
+                            if include_chars {
+                                let char_count = take_i32(&mut off, bytes)? as usize;
+                                let mut chars: Vec<Py<PyAny>> = Vec::with_capacity(char_count);
+                                for _ in 0..char_count {
+                                    let cx0 = take_f32(&mut off, bytes)?;
+                                    let cy0 = take_f32(&mut off, bytes)?;
+                                    let cx1 = take_f32(&mut off, bytes)?;
+                                    let cy1 = take_f32(&mut off, bytes)?;
+                                    let ox = take_f32(&mut off, bytes)?;
+                                    let oy = take_f32(&mut off, bytes)?;
+                                    let c_utf8 = take_str(&mut off, bytes)?;
+                                    let c_dict = PyDict::new(py);
+                                    c_dict.set_item("bbox", (cx0, cy0, cx1, cy1))?;
+                                    c_dict.set_item("origin", (ox, oy))?;
+                                    c_dict.set_item("c", c_utf8)?;
+                                    chars.push(c_dict.into_any().unbind());
+                                }
+                                span_dict.set_item(
+                                    "chars",
+                                    chars.into_pyobject(py)?.into_any().unbind(),
+                                )?;
+                            }
+
                             spans.push(span_dict.into_any().unbind());
                         }
                         line_dict.set_item("spans", spans.into_pyobject(py)?.into_any().unbind())?;

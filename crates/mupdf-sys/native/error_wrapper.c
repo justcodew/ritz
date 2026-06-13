@@ -676,7 +676,7 @@ static void gb_put(fz_context *ctx, growbuf *gb, const void *src, size_t n) {
 }
 
 int mupdf_safe_stext_to_dict(fz_context *ctx, fz_stext_page *stpage,
-                             char **out, size_t *out_len) {
+                             int include_chars, char **out, size_t *out_len) {
     if (!ctx || !stpage || !out || !out_len) return -1;
     *out = NULL;
     *out_len = 0;
@@ -777,6 +777,31 @@ int mupdf_safe_stext_to_dict(fz_context *ctx, fz_stext_page *stpage,
                         if (c == span_end) break;
                     }
                     memcpy(gb.data + text_len_pos, &text_len, 4);
+
+                    /* rawdict：每个 span 追加 chars 列表 */
+                    if (include_chars) {
+                        size_t cc_pos = gb.len;
+                        int char_count = 0;
+                        gb_put(ctx, &gb, &(int){0}, 4);
+                        for (fz_stext_char *c = span_start; ; c = c->next) {
+                            fz_quad q = c->quad;
+                            float cx0 = q.ul.x < q.ll.x ? q.ul.x : q.ll.x;
+                            float cy0 = q.ul.y < q.ur.y ? q.ul.y : q.ur.y;
+                            float cx1 = q.lr.x > q.ur.x ? q.lr.x : q.ur.x;
+                            float cy1 = q.lr.y > q.ll.y ? q.lr.y : q.ll.y;
+                            float cbbox[4] = { cx0, cy0, cx1, cy1 };
+                            gb_put(ctx, &gb, cbbox, sizeof(cbbox));
+                            float origin[2] = { c->origin.x, c->origin.y };
+                            gb_put(ctx, &gb, origin, sizeof(origin));
+                            char tmp[8];
+                            int n = fz_runetochar(tmp, c->c);
+                            gb_put(ctx, &gb, &n, 4);
+                            if (n > 0) gb_put(ctx, &gb, tmp, n);
+                            char_count++;
+                            if (c == span_end) break;
+                        }
+                        memcpy(gb.data + cc_pos, &char_count, 4);
+                    }
 
                     span_count++;
                     ch = span_end->next;
