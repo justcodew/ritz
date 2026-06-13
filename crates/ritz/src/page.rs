@@ -93,12 +93,21 @@ impl PyPage {
         let result = match mode {
             "text" | "html" | "xhtml" | "xml" => self.stext_to_string(py, stpage, mode),
             "json" => self.stext_to_json(py, stpage, 1.0),
+            "rawjson" => {
+                // rawjson = json.dumps(rawdict)：MuPDF 无原生 rawjson 打印器，
+                // 构造 rawdict 结构后用 Python 标准库序列化。
+                let rawdict = self.stext_to_dict(py, stpage, true)?;
+                let json = py.import("json")?;
+                let dumps = json.getattr("dumps")?;
+                let s = dumps.call1((rawdict,))?;
+                Ok(s.into_any().unbind())
+            }
             "words" => self.stext_to_words(py, stpage),
             "blocks" => self.stext_to_blocks(py, stpage),
             "dict" => self.stext_to_dict(py, stpage, false),
             "rawdict" => self.stext_to_dict(py, stpage, true),
             other => Err(PyRuntimeError::new_err(format!(
-                "unsupported text mode: '{}' (supported: text, html, xhtml, xml, json, words, blocks, dict, rawdict)",
+                "unsupported text mode: '{}' (supported: text, html, xhtml, xml, json, rawjson, words, blocks, dict, rawdict)",
                 other
             ))),
         };
