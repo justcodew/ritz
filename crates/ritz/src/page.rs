@@ -4,15 +4,15 @@ use crate::document::PyDocument;
 use crate::pixmap::PyPixmap;
 use mupdf_sys::{
     self, fz_context, fz_page, mupdf_safe_bound_page, mupdf_safe_bound_page_box,
-    mupdf_safe_drop_page, mupdf_safe_drop_stext_page, mupdf_safe_load_links,
-    mupdf_safe_new_stext_page, mupdf_safe_render_pixmap, mupdf_safe_stext_to_blocks,
-    mupdf_safe_stext_to_dict, mupdf_safe_stext_to_html, mupdf_safe_stext_to_json,
-    mupdf_safe_stext_to_text, mupdf_safe_stext_to_words, mupdf_safe_stext_to_xml,
-    mupdf_safe_stext_to_xhtml, fz_pixmap, fz_stext_page,
+    mupdf_safe_drop_page, mupdf_safe_drop_stext_page, mupdf_safe_get_images,
+    mupdf_safe_load_links, mupdf_safe_new_stext_page, mupdf_safe_render_pixmap,
+    mupdf_safe_stext_to_blocks, mupdf_safe_stext_to_dict, mupdf_safe_stext_to_html,
+    mupdf_safe_stext_to_json, mupdf_safe_stext_to_text, mupdf_safe_stext_to_words,
+    mupdf_safe_stext_to_xml, mupdf_safe_stext_to_xhtml, fz_pixmap, fz_stext_page,
 };
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyBytes, PyDict};
 use std::os::raw::{c_char, c_int};
 use std::ptr;
 
@@ -169,6 +169,112 @@ impl PyPage {
         unsafe { mupdf_sys::mupdf_free(ptr as *mut _) };
         result
     }
+
+    /// get_images(include_data=False) -> list[dict]
+    ///
+    /// 列出页面上所有图片（按 fz_image* 去重）。
+    /// 每条返回 {"bbox", "width", "height", "bpc", "colorspace", "imagemask"}；
+    /// include_data=True 时额外含 "image"（PNG 字节）。
+    #[pyo3(signature = (include_data=false))]
+    fn get_images(
+        &self,
+        py: Python<'_>,
+        include_data: bool,
+    ) -> PyResult<Vec<Py<PyAny>>> {
+        let mut ptr: *mut c_char = ptr::null_mut();
+        let mut total_len: usize = 0;
+        let mut n: c_int = 0;
+        let rc = unsafe {
+            mupdf_safe_get_images(
+                self.ctx,
+                self.raw,
+                if include_data { 1 } else { 0 },
+                &mut ptr,
+                &mut total_len,
+                &mut n,
+            )
+        };
+        if rc != 0 {
+            return Err(PyDocument::last_error_pub());
+        }
+        if n == 0 || ptr.is_null() || total_len == 0 {
+            return Ok(Vec::new());
+        }
+
+        let result = (|| -> PyResult<Vec<Py<PyAny>>> {
+            let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, total_len) };
+            let mut off = 0usize;
+            let need = |n: usize, off: usize| -> PyResult<()> {
+                if off + n > bytes.len() {
+                    return Err(PyRuntimeError::new_err(format!(
+                        "images buffer underrun at {} need {} have {}",
+                        off, n, bytes.len()
+                    )));
+                }
+                Ok(())
+            };
+            let take_i32 = |off: &mut usize| -> PyResult<i32> {
+                need(4, *off)?;
+                let v = i32::from_ne_bytes(bytes[*off..*off + 4].try_into().unwrap());
+                *off += 4;
+                Ok(v)
+            };
+            let take_f32 = |off: &mut usize| -> PyResult<f32> {
+                need(4, *off)?;
+                let v = f32::from_ne_bytes(bytes[*off..*off + 4].try_into().unwrap());
+                *off += 4;
+                Ok(v)
+            };
+            let take_str = |off: &mut usize| -> PyResult<String> {
+                let len = take_i32(off)? as usize;
+                need(len, *off)?;
+                let s = std::str::from_utf8(&bytes[*off..*off + len])
+                    .unwrap_or("")
+                    .to_string();
+                *off += len;
+                Ok(s)
+            };
+
+            // 跳过 image_count（已经在 n 里）
+            let _ = take_i32(&mut off)?;
+
+            let mut out = Vec::with_capacity(n as usize);
+            for _ in 0..n {
+                let bx0 = take_f32(&mut off)?;
+                let by0 = take_f32(&mut off)?;
+                let bx1 = take_f32(&mut off)?;
+                let by1 = take_f32(&mut off)?;
+                let w = take_i32(&mut off)?;
+                let h = take_i32(&mut off)?;
+                let bpc = take_i32(&mut off)?;
+                let cs = take_str(&mut off)?;
+                let mask = take_i32(&mut off)?;
+                let has_data = take_i32(&mut off)?;
+
+                let d = PyDict::new(py);
+                d.set_item("bbox", (bx0, by0, bx1, by1))?;
+                d.set_item("width", w)?;
+                d.set_item("height", h)?;
+                d.set_item("bpc", bpc)?;
+                d.set_item("colorspace", cs)?;
+                d.set_item("imagemask", mask)?;
+
+                if has_data != 0 {
+                    let dlen = take_i32(&mut off)? as usize;
+                    need(dlen, off)?;
+                    let py_bytes = PyBytes::new(py, &bytes[off..off + dlen]);
+                    off += dlen;
+                    d.set_item("image", py_bytes)?;
+                }
+                out.push(d.into_any().unbind());
+            }
+            Ok(out)
+        })();
+
+        unsafe { mupdf_sys::mupdf_free(ptr as *mut _) };
+        result
+    }
+
 
     /// get_pixmap(matrix=None, dpi=None, alpha=False) -> Pixmap
     ///

@@ -270,6 +270,17 @@ extern "C" {
         total_n: *mut std::os::raw::c_int,
     ) -> std::os::raw::c_int;
 
+    /* ---- 图片提取 ---- */
+
+    pub fn mupdf_safe_get_images(
+        ctx: *mut fz_context,
+        page: *mut fz_page,
+        include_data: std::os::raw::c_int,
+        out: *mut *mut std::os::raw::c_char,
+        out_len: *mut usize,
+        total_n: *mut std::os::raw::c_int,
+    ) -> std::os::raw::c_int;
+
     /* ---- 内存释放 ---- */
 
     pub fn mupdf_free(ptr: *mut std::ffi::c_void);

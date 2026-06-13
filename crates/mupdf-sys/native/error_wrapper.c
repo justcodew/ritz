@@ -1010,6 +1010,200 @@ int mupdf_safe_pixmap_to_png(fz_context *ctx, fz_pixmap *pix,
 }
 
 /* ====================================================================
+ * 图片提取（get_images）
+ * ==================================================================== */
+
+/*
+ * 通过自定义 fz_device 捕获 fill_image 回调，遍历页面上所有图片。
+ * 按 fz_image* 指针去重（同一张图复用多次只输出一次）。
+ *
+ * 输出二进制布局：
+ *   [image_count: i32]
+ *   for each image:
+ *     [bbox: 4 floats]
+ *     [width: i32]
+ *     [height: i32]
+ *     [bpc: i32]
+ *     [colorspace_len: i32][colorspace bytes]
+ *     [imagemask: i32]
+ *     [has_data: i32]
+ *     if has_data:
+ *       [data_len: i32][png bytes]
+ */
+typedef struct {
+    fz_device dev;
+    growbuf gb;
+    int include_data;
+    int image_count;
+    int error;
+    fz_image **seen;
+    int seen_count;
+    int seen_cap;
+} image_capture_device;
+
+static int img_seen(image_capture_device *cap, fz_image *img) {
+    for (int i = 0; i < cap->seen_count; i++) {
+        if (cap->seen[i] == img) return 1;
+    }
+    return 0;
+}
+
+static int img_add_seen(fz_context *ctx, image_capture_device *cap, fz_image *img) {
+    if (cap->seen_count == cap->seen_cap) {
+        int nc = cap->seen_cap ? cap->seen_cap * 2 : 8;
+        fz_image **n = (fz_image **)fz_realloc(ctx, cap->seen, nc * sizeof(fz_image *));
+        if (!n) return -1;
+        cap->seen = n;
+        cap->seen_cap = nc;
+    }
+    cap->seen[cap->seen_count++] = img;
+    return 0;
+}
+
+static void cap_fill_image(fz_context *ctx, fz_device *dev_, fz_image *img,
+                           fz_matrix ctm, float alpha, fz_color_params cp) {
+    (void)alpha; (void)cp;
+    image_capture_device *cap = (image_capture_device *)dev_;
+    if (cap->error) return;
+    if (img_seen(cap, img)) return;
+    if (img_add_seen(ctx, cap, img)) { cap->error = 1; return; }
+
+    fz_try(ctx) {
+        fz_rect r = fz_transform_rect(fz_unit_rect, ctm);
+        float bbox[4] = { r.x0, r.y0, r.x1, r.y1 };
+        gb_put(ctx, &cap->gb, bbox, sizeof(bbox));
+
+        int w = img->w, h = img->h;
+        int bpc = img->bpc ? img->bpc : 8;
+        gb_put(ctx, &cap->gb, &w, 4);
+        gb_put(ctx, &cap->gb, &h, 4);
+        gb_put(ctx, &cap->gb, &bpc, 4);
+
+        const char *cs = img->colorspace ? fz_colorspace_name(ctx, img->colorspace) : "";
+        int cslen = (int)strlen(cs);
+        gb_put(ctx, &cap->gb, &cslen, 4);
+        if (cslen > 0) gb_put(ctx, &cap->gb, cs, cslen);
+
+        int mask = (int)img->imagemask;
+        gb_put(ctx, &cap->gb, &mask, 4);
+
+        int has_data = cap->include_data ? 1 : 0;
+        gb_put(ctx, &cap->gb, &has_data, 4);
+
+        if (has_data) {
+            fz_pixmap *pix = NULL;
+            fz_buffer *buf = NULL;
+            unsigned char *data = NULL;
+            size_t dlen = 0;
+
+            pix = fz_get_pixmap_from_image(ctx, img, NULL, NULL, NULL, NULL);
+            if (pix) {
+                buf = fz_new_buffer_from_pixmap_as_png(ctx, pix, fz_default_color_params);
+                if (buf) {
+                    dlen = fz_buffer_extract(ctx, buf, &data);
+                    int dl32 = (int)dlen;
+                    gb_put(ctx, &cap->gb, &dl32, 4);
+                    if (dlen > 0) gb_put(ctx, &cap->gb, data, dlen);
+                    if (data) fz_free(ctx, data);
+                    fz_drop_buffer(ctx, buf);
+                } else {
+                    int zero = 0;
+                    gb_put(ctx, &cap->gb, &zero, 4);
+                }
+                fz_drop_pixmap(ctx, pix);
+            } else {
+                int zero = 0;
+                gb_put(ctx, &cap->gb, &zero, 4);
+            }
+        }
+        cap->image_count++;
+    }
+    fz_catch(ctx) {
+        cap->error = 1;
+    }
+}
+
+int mupdf_safe_get_images(fz_context *ctx, fz_page *page, int include_data,
+                          char **out, size_t *out_len, int *total_n) {
+    if (!ctx || !page || !out || !out_len || !total_n) return -1;
+    *out = NULL;
+    *out_len = 0;
+    *total_n = 0;
+
+    image_capture_device *cap = NULL;
+    fz_display_list *list = NULL;
+    size_t count_pos = 0;
+
+    /* 在 fz_drop_device 前把 growbuf 所有权转移到这里，避免 use-after-free */
+    unsigned char *gb_data = NULL;
+    size_t gb_len = 0;
+    int gb_count = 0;
+    int gb_error = 0;
+
+    mupdf_clear_error();
+    fz_try(ctx) {
+        list = fz_new_display_list_from_page(ctx, page);
+        cap = fz_new_derived_device(ctx, image_capture_device);
+        cap->gb.data = NULL; cap->gb.len = 0; cap->gb.cap = 0;
+        cap->include_data = include_data;
+        cap->image_count = 0;
+        cap->error = 0;
+        cap->seen = NULL; cap->seen_count = 0; cap->seen_cap = 0;
+
+        cap->dev.fill_image = cap_fill_image;
+        /* fill_image_mask 签名不同（含 colorspace + color），暂不捕获，罕见场景 */
+
+        /* image_count 占位 */
+        count_pos = cap->gb.len;
+        int placeholder = 0;
+        gb_put(ctx, &cap->gb, &placeholder, 4);
+
+        fz_run_display_list(ctx, list, (fz_device *)cap, fz_identity, fz_infinite_rect, NULL);
+        fz_close_device(ctx, (fz_device *)cap);
+    }
+    fz_always(ctx) {
+        /* 在 drop_device 前抢救 growbuf 和状态到本地 */
+        if (cap) {
+            gb_data = cap->gb.data;
+            gb_len = cap->gb.len;
+            gb_count = cap->image_count;
+            gb_error = cap->error;
+            cap->gb.data = NULL;  /* 防止 drop_device 内部误用（虽然不会） */
+            if (cap->seen) {
+                fz_free(ctx, cap->seen);
+                cap->seen = NULL;
+            }
+            fz_drop_device(ctx, (fz_device *)cap);
+        }
+        if (list) fz_drop_display_list(ctx, list);
+    }
+    fz_catch(ctx) {
+        set_error("get_images: %s", fz_caught_message(ctx));
+        if (gb_data) {
+            fz_free(ctx, gb_data);
+        }
+        return -1;
+    }
+
+    if (gb_error) {
+        set_error("get_images: image capture failed");
+        if (gb_data) {
+            fz_free(ctx, gb_data);
+        }
+        return -1;
+    }
+
+    if (gb_data) {
+        memcpy(gb_data + count_pos, &gb_count, 4);
+    }
+
+    *out = (char *)gb_data;
+    *out_len = gb_len;
+    *total_n = gb_count;
+    return 0;
+}
+
+/* ====================================================================
  * 内存释放
  * ==================================================================== */
 

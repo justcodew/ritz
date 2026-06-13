@@ -140,6 +140,18 @@ int mupdf_safe_pixmap_to_png(fz_context *ctx, fz_pixmap *pix,
 int mupdf_safe_load_links(fz_context *ctx, fz_page *page,
                           char **out, size_t *out_len, int *total_n);
 
+/* ---- 图片提取 ---- */
+/*
+ * 遍历页面上所有图片（按 fz_image* 去重）。
+ * 二进制布局：[image_count: i32] then per image:
+ *   [bbox: 4 floats][w: i32][h: i32][bpc: i32]
+ *   [cs_len: i32][cs bytes][imagemask: i32][has_data: i32]
+ *   if has_data: [data_len: i32][png bytes]
+ * include_data != 0 时额外编码每张图为 PNG。
+ */
+int mupdf_safe_get_images(fz_context *ctx, fz_page *page, int include_data,
+                          char **out, size_t *out_len, int *total_n);
+
 /* ---- 内存释放 ---- */
 void mupdf_free(void *ptr);
 
