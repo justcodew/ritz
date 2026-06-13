@@ -23,6 +23,8 @@ extern "C" {
 /* ---- 错误缓冲区（线程局部） ---- */
 const char *mupdf_last_error(void);
 void mupdf_clear_error(void);
+/* 内部 helper：格式化写入 last_error（同时供 mupdf_extensions.c 使用）。 */
+void set_error(const char *fmt, ...);
 
 /* ---- 上下文 ---- */
 fz_context *mupdf_safe_new_context(void);

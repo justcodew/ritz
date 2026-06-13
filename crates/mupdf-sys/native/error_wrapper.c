@@ -30,7 +30,7 @@ void mupdf_clear_error(void) {
     last_error[0] = '\0';
 }
 
-static void set_error(const char *fmt, ...) {
+void set_error(const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(last_error, sizeof(last_error), fmt, ap);

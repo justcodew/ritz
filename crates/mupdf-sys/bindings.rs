@@ -290,4 +290,15 @@ extern "C" {
     /* ---- 内存释放 ---- */
 
     pub fn mupdf_free(ptr: *mut std::ffi::c_void);
+
+    /* ---- 批量扩展（mupdf_extensions.c） ---- */
+
+    pub fn mupdf_ext_extract_pages_text(
+        ctx: *mut fz_context,
+        doc: *mut fz_document,
+        out_text: *mut *mut std::os::raw::c_char,
+        out_text_len: *mut usize,
+        out_offsets: *mut *mut usize,
+        out_page_count: *mut std::os::raw::c_int,
+    ) -> std::os::raw::c_int;
 }

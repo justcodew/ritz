@@ -3,9 +3,10 @@
 use crate::page::PyPage;
 use mupdf_sys::{
     self, fz_context, fz_document,
-    mupdf_safe_authenticate_password, mupdf_safe_count_pages, mupdf_safe_drop_document,
-    mupdf_safe_drop_context, mupdf_safe_load_page, mupdf_safe_lookup_metadata,
-    mupdf_safe_needs_password, mupdf_safe_new_context, mupdf_safe_open_document,
+    mupdf_ext_extract_pages_text, mupdf_safe_authenticate_password, mupdf_safe_count_pages,
+    mupdf_safe_drop_document, mupdf_safe_drop_context, mupdf_safe_load_page,
+    mupdf_safe_lookup_metadata, mupdf_safe_needs_password, mupdf_safe_new_context,
+    mupdf_safe_open_document,
 };
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -149,6 +150,71 @@ impl PyDocument {
     /// doc[i] — 等价于 doc.load_page(i)。
     fn __getitem__(slf: &Bound<'_, Self>, index: usize) -> PyResult<Py<PyPage>> {
         Self::load_page(slf, index)
+    }
+
+    /// get_text_batch() -> list[str]
+    ///
+    /// 一次性提取所有页的纯文本，避免 N 次 Python↔Rust 往返。
+    /// 内部走 mupdf_ext_extract_pages_text，单次 C 调用遍历全文档。
+    /// 等价于 [doc[i].get_text("text") for i in range(len(doc))]，但更快。
+    #[pyo3(signature = ())]
+    fn get_text_batch(&self, py: Python<'_>) -> PyResult<Vec<Py<PyAny>>> {
+        let mut text_ptr: *mut std::os::raw::c_char = ptr::null_mut();
+        let mut text_len: usize = 0;
+        let mut offsets_ptr: *mut usize = ptr::null_mut();
+        let mut page_count: c_int = 0;
+
+        let rc = unsafe {
+            mupdf_ext_extract_pages_text(
+                self.ctx,
+                self.raw,
+                &mut text_ptr,
+                &mut text_len,
+                &mut offsets_ptr,
+                &mut page_count,
+            )
+        };
+        if rc != 0 {
+            return Err(Self::last_error_pub());
+        }
+
+        let result = (|| -> PyResult<Vec<Py<PyAny>>> {
+            if page_count == 0 || text_ptr.is_null() || offsets_ptr.is_null() {
+                return Ok(Vec::new());
+            }
+            let bytes = unsafe {
+                std::slice::from_raw_parts(text_ptr as *const u8, text_len)
+            };
+            let offsets = unsafe {
+                std::slice::from_raw_parts(offsets_ptr, page_count as usize + 1)
+            };
+
+            let mut out = Vec::with_capacity(page_count as usize);
+            for i in 0..page_count as usize {
+                let start = offsets[i];
+                let end = offsets[i + 1];
+                let slice = if start <= end && end <= bytes.len() {
+                    &bytes[start..end]
+                } else {
+                    &bytes[start..]
+                };
+                // PyMuPDF 每页文本通常是 NUL-safe 的 utf8 lossy
+                let s = String::from_utf8_lossy(slice).into_owned();
+                let py_str = s.into_pyobject(py)?.into_any().unbind();
+                out.push(py_str);
+            }
+            Ok(out)
+        })();
+
+        unsafe {
+            if !text_ptr.is_null() {
+                mupdf_sys::mupdf_free(text_ptr as *mut _);
+            }
+            if !offsets_ptr.is_null() {
+                mupdf_sys::mupdf_free(offsets_ptr as *mut _);
+            }
+        }
+        result
     }
 
     fn __repr__(&self) -> String {

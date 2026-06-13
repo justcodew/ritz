@@ -25,6 +25,8 @@ fn main() {
     println!("cargo:rerun-if-changed=wrapper.h");
     println!("cargo:rerun-if-changed=native/error_wrapper.c");
     println!("cargo:rerun-if-changed=native/error_wrapper.h");
+    println!("cargo:rerun-if-changed=native/mupdf_extensions.c");
+    println!("cargo:rerun-if-changed=native/mupdf_extensions.h");
 }
 
 /// 编译 MuPDF 静态库。
@@ -109,6 +111,7 @@ fn compile_c_wrapper(manifest_dir: &std::path::Path, mupdf_dir: &std::path::Path
     let mut build = cc::Build::new();
     build
         .file(manifest_dir.join("native/error_wrapper.c"))
+        .file(manifest_dir.join("native/mupdf_extensions.c"))
         .include(manifest_dir.join("native"))
         .include(mupdf_dir.join("include"));
 
