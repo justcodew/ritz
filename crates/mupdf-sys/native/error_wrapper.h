@@ -48,6 +48,8 @@ int mupdf_safe_lookup_metadata(fz_context *ctx, fz_document *doc,
 fz_page *mupdf_safe_load_page(fz_context *ctx, fz_document *doc, int number);
 void mupdf_safe_drop_page(fz_context *ctx, fz_page *page);
 fz_rect mupdf_safe_bound_page(fz_context *ctx, fz_page *page);
+/* box_type: 0=media,1=crop,2=bleed,3=trim,4=art */
+fz_rect mupdf_safe_bound_page_box(fz_context *ctx, fz_page *page, int box_type);
 
 /* ---- 结构化文本（stext） ---- */
 int mupdf_safe_new_stext_page(fz_context *ctx, fz_page *page, fz_stext_page **out);
@@ -59,6 +61,9 @@ int mupdf_safe_stext_to_html(fz_context *ctx, fz_stext_page *stpage,
                              char **out, size_t *out_len);
 int mupdf_safe_stext_to_xml(fz_context *ctx, fz_stext_page *stpage,
                             char **out, size_t *out_len);
+/* json: scale 是坐标缩放因子（PyMuPDF 用 1.0） */
+int mupdf_safe_stext_to_json(fz_context *ctx, fz_stext_page *stpage, float scale,
+                             char **out, size_t *out_len);
 
 /* ---- 像素图（pixmap）渲染 ---- */
 /* zoom=1.0 为原始 DPI(72)，alpha=1 带透明通道 */
@@ -74,6 +79,15 @@ unsigned char *mupdf_safe_pixmap_samples(fz_context *ctx, fz_pixmap *pix);
 /* 编码为 PNG，输出 malloc 的 buffer，调用方须 mupdf_free */
 int mupdf_safe_pixmap_to_png(fz_context *ctx, fz_pixmap *pix,
                              unsigned char **out, size_t *out_len);
+
+/* ---- 链接（links） ---- */
+/*
+ * 遍历 page 的 fz_link 链表，扁平化到 malloc 数组返回。
+ * 每条链接 = 1 个 fz_rect(16B) + NUL 结尾 uri 字符串（连续存放）。
+ * 返回 0 成功（out/total_n/out_bytes 写好），-1 失败。
+ */
+int mupdf_safe_load_links(fz_context *ctx, fz_page *page,
+                          char **out, size_t *out_len, int *total_n);
 
 /* ---- 内存释放 ---- */
 void mupdf_free(void *ptr);

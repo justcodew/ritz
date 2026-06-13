@@ -219,6 +219,24 @@ fz_rect mupdf_safe_bound_page(fz_context *ctx, fz_page *page) {
     return r;
 }
 
+fz_rect mupdf_safe_bound_page_box(fz_context *ctx, fz_page *page, int box_type) {
+    fz_rect r = {0, 0, 0, 0};
+    if (!ctx || !page) return r;
+    static const fz_box_type kBoxes[5] = {
+        FZ_MEDIA_BOX, FZ_CROP_BOX, FZ_BLEED_BOX, FZ_TRIM_BOX, FZ_ART_BOX,
+    };
+    if (box_type < 0 || box_type > 4) box_type = 1; /* 默认 cropbox */
+    mupdf_clear_error();
+    fz_try(ctx) {
+        r = fz_bound_page_box(ctx, page, kBoxes[box_type]);
+    }
+    fz_catch(ctx) {
+        set_error("bound page box: %s", fz_caught_message(ctx));
+        r = fz_make_rect(0, 0, 0, 0);
+    }
+    return r;
+}
+
 /* ====================================================================
  * 结构化文本（stext）
  * ==================================================================== */
@@ -307,6 +325,122 @@ int mupdf_safe_stext_to_html(fz_context *ctx, fz_stext_page *stpage,
 int mupdf_safe_stext_to_xml(fz_context *ctx, fz_stext_page *stpage,
                             char **out, size_t *out_len) {
     return stext_to_buffer(ctx, stpage, fz_print_stext_page_as_xml, out, out_len);
+}
+
+/*
+ * JSON 模式：fz_print_stext_page_as_json 签名为 (ctx, out, page, float scale)，
+ * 与 text/html/xml 都不同，所以单独实现。
+ */
+int mupdf_safe_stext_to_json(fz_context *ctx, fz_stext_page *stpage, float scale,
+                             char **out, size_t *out_len) {
+    if (!ctx || !stpage || !out || !out_len) return -1;
+    *out = NULL;
+    *out_len = 0;
+
+    fz_buffer *buf = NULL;
+    fz_output *stm = NULL;
+    unsigned char *data = NULL;
+    size_t len = 0;
+
+    mupdf_clear_error();
+    fz_try(ctx) {
+        buf = fz_new_buffer(ctx, 256);
+        stm = fz_new_output_with_buffer(ctx, buf);
+        fz_print_stext_page_as_json(ctx, stm, stpage, scale);
+        fz_close_output(ctx, stm);
+        len = fz_buffer_extract(ctx, buf, &data);
+    }
+    fz_always(ctx) {
+        fz_drop_output(ctx, stm);
+        fz_drop_buffer(ctx, buf);
+    }
+    fz_catch(ctx) {
+        set_error("stext json: %s", fz_caught_message(ctx));
+        if (data) free(data);
+        return -1;
+    }
+
+    *out = (char *)data;
+    *out_len = len;
+    return 0;
+}
+
+/* ====================================================================
+ * 链接（links）
+ * ==================================================================== */
+
+/*
+ * 链接扁平化：遍历 fz_link 链表，每条记录编码为
+ *   [rect.x0, rect.y0, rect.x1, rect.y1] (4 floats = 16B)
+ *   + uri 字符串（含 NUL 结尾）
+ * 顺序写入 malloc 缓冲区。调用方通过 mupdf_free 释放。
+ *
+ * 返回值：0 成功，-1 失败。
+ * *total_n 写入链接条数。
+ * *out_len 写入总字节数。
+ */
+int mupdf_safe_load_links(fz_context *ctx, fz_page *page,
+                          char **out, size_t *out_len, int *total_n) {
+    if (!ctx || !page || !out || !out_len || !total_n) return -1;
+    *out = NULL;
+    *out_len = 0;
+    *total_n = 0;
+
+    fz_link *head = NULL;
+    char *buf = NULL;
+
+    mupdf_clear_error();
+    fz_try(ctx) {
+        head = fz_load_links(ctx, page);
+    }
+    fz_catch(ctx) {
+        set_error("load links: %s", fz_caught_message(ctx));
+        return -1;
+    }
+
+    /* 第一遍：计算总字节数 */
+    size_t total = 0;
+    int n = 0;
+    for (fz_link *l = head; l; l = l->next) {
+        const char *uri = l->uri ? l->uri : "";
+        size_t uri_len = strlen(uri) + 1;
+        total += 4 * sizeof(float) + uri_len;
+        n++;
+    }
+
+    if (total == 0) {
+        /* 无链接 */
+        fz_drop_link(ctx, head);
+        *total_n = 0;
+        *out_len = 0;
+        *out = NULL;
+        return 0;
+    }
+
+    buf = (char *)malloc(total);
+    if (!buf) {
+        fz_drop_link(ctx, head);
+        set_error("links: out of memory (%zu bytes)", total);
+        return -1;
+    }
+
+    /* 第二遍：写入数据 */
+    char *p = buf;
+    for (fz_link *l = head; l; l = l->next) {
+        const char *uri = l->uri ? l->uri : "";
+        size_t uri_len = strlen(uri) + 1;
+        float coords[4] = { l->rect.x0, l->rect.y0, l->rect.x1, l->rect.y1 };
+        memcpy(p, coords, sizeof(coords));
+        p += sizeof(coords);
+        memcpy(p, uri, uri_len);
+        p += uri_len;
+    }
+
+    fz_drop_link(ctx, head);
+    *out = buf;
+    *out_len = total;
+    *total_n = n;
+    return 0;
 }
 
 /* ====================================================================

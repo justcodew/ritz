@@ -40,6 +40,22 @@ impl<'doc, 'ctx> Page<'doc, 'ctx> {
         self.rect().height()
     }
 
+    /// 指定 box 类型：0=media 1=crop 2=bleed 3=trim 4=art。
+    pub fn bound_box(&self, box_type: i32) -> Rect {
+        let r = unsafe { mupdf_sys::mupdf_safe_bound_page_box(self.ctx, self.raw, box_type) };
+        Rect::from(r)
+    }
+
+    /// mediabox（与 PyMuPDF Page.mediabox 对应）。
+    pub fn mediabox(&self) -> Rect {
+        self.bound_box(0)
+    }
+
+    /// cropbox（与 PyMuPDF Page.cropbox 对应；fz_bound_page 默认就是 cropbox）。
+    pub fn cropbox(&self) -> Rect {
+        self.bound_box(1)
+    }
+
     /// 构造本页的结构化文本，可导出为 text/html/xml。
     pub fn new_stext_page(&self) -> Result<STextPage<'_, 'doc, 'ctx>> {
         let mut raw: *mut mupdf_sys::fz_stext_page = std::ptr::null_mut();

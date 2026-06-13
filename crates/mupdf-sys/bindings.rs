@@ -149,6 +149,12 @@ extern "C" {
 
     pub fn mupdf_safe_bound_page(ctx: *mut fz_context, page: *mut fz_page) -> fz_rect;
 
+    pub fn mupdf_safe_bound_page_box(
+        ctx: *mut fz_context,
+        page: *mut fz_page,
+        box_type: std::os::raw::c_int,
+    ) -> fz_rect;
+
     /* ---- 结构化文本（stext） ---- */
 
     pub fn mupdf_safe_new_stext_page(
@@ -176,6 +182,14 @@ extern "C" {
     pub fn mupdf_safe_stext_to_xml(
         ctx: *mut fz_context,
         stpage: *mut fz_stext_page,
+        out: *mut *mut std::os::raw::c_char,
+        out_len: *mut usize,
+    ) -> std::os::raw::c_int;
+
+    pub fn mupdf_safe_stext_to_json(
+        ctx: *mut fz_context,
+        stpage: *mut fz_stext_page,
+        scale: f32,
         out: *mut *mut std::os::raw::c_char,
         out_len: *mut usize,
     ) -> std::os::raw::c_int;
@@ -213,6 +227,16 @@ extern "C" {
         pix: *mut fz_pixmap,
         out: *mut *mut std::os::raw::c_uchar,
         out_len: *mut usize,
+    ) -> std::os::raw::c_int;
+
+    /* ---- 链接（links） ---- */
+
+    pub fn mupdf_safe_load_links(
+        ctx: *mut fz_context,
+        page: *mut fz_page,
+        out: *mut *mut std::os::raw::c_char,
+        out_len: *mut usize,
+        total_n: *mut std::os::raw::c_int,
     ) -> std::os::raw::c_int;
 
     /* ---- 内存释放 ---- */

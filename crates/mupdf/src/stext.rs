@@ -112,6 +112,23 @@ impl<'a, 'doc, 'ctx> STextPage<'a, 'doc, 'ctx> {
         let bytes = self.to_buffer(TextMode::Xml)?;
         Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
+
+    /// JSON 输出（与 get_text("json") 一致）。
+    /// scale 是坐标缩放因子；PyMuPDF 默认 1.0。
+    pub fn to_json(&self, scale: f32) -> Result<String> {
+        let mut ptr: *mut c_char = std::ptr::null_mut();
+        let mut len: usize = 0;
+        let rc = unsafe {
+            mupdf_sys::mupdf_safe_stext_to_json(self.ctx, self.raw, scale, &mut ptr, &mut len)
+        };
+        if rc != 0 {
+            return Err(MuPdfError::STextPage(
+                MuPdfError::from_last_error().to_string(),
+            ));
+        }
+        let bytes = CBuffer::new(ptr, len).to_vec();
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
+    }
 }
 
 impl Drop for STextPage<'_, '_, '_> {

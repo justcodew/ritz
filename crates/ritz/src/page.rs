@@ -3,13 +3,15 @@
 use crate::document::PyDocument;
 use crate::pixmap::PyPixmap;
 use mupdf_sys::{
-    self, fz_context, fz_page, mupdf_safe_bound_page, mupdf_safe_drop_page,
-    mupdf_safe_drop_stext_page, mupdf_safe_new_stext_page, mupdf_safe_render_pixmap,
-    mupdf_safe_stext_to_html, mupdf_safe_stext_to_text, mupdf_safe_stext_to_xml, fz_pixmap,
+    self, fz_context, fz_page, mupdf_safe_bound_page, mupdf_safe_bound_page_box,
+    mupdf_safe_drop_page, mupdf_safe_drop_stext_page, mupdf_safe_load_links,
+    mupdf_safe_new_stext_page, mupdf_safe_render_pixmap, mupdf_safe_stext_to_html,
+    mupdf_safe_stext_to_json, mupdf_safe_stext_to_text, mupdf_safe_stext_to_xml, fz_pixmap,
     fz_stext_page,
 };
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 use std::os::raw::{c_char, c_int};
 use std::ptr;
 
@@ -59,10 +61,23 @@ impl PyPage {
         r.y1 - r.y0
     }
 
+    /// mediabox（x0, y0, x1, y1）。
+    #[getter]
+    fn mediabox(&self) -> (f32, f32, f32, f32) {
+        let r = unsafe { mupdf_safe_bound_page_box(self.ctx, self.raw, 0) };
+        (r.x0, r.y0, r.x1, r.y1)
+    }
+
+    /// cropbox（x0, y0, x1, y1）。
+    #[getter]
+    fn cropbox(&self) -> (f32, f32, f32, f32) {
+        let r = unsafe { mupdf_safe_bound_page_box(self.ctx, self.raw, 1) };
+        (r.x0, r.y0, r.x1, r.y1)
+    }
+
     /// get_text(mode="text") -> str
     ///
-    /// 支持模式：text / html / xml（PyMuPDF 还有 words/blocks/rawdict/json 等，
-    /// 阶段三逐步补充）。
+    /// 支持模式：text / html / xml / json（words/blocks/rawdict 在阶段三后续补）。
     #[pyo3(signature = (mode = "text"))]
     fn get_text(&self, mode: &str) -> PyResult<String> {
         let mut stpage: *mut fz_stext_page = ptr::null_mut();
@@ -71,8 +86,92 @@ impl PyPage {
             return Err(PyDocument::last_error_pub());
         }
 
-        let result = self.text_to_string(stpage, mode);
+        // json 模式单独处理（签名不同：scale 而非 id）
+        let result = if mode == "json" {
+            let mut ptr: *mut c_char = ptr::null_mut();
+            let mut len: usize = 0;
+            let rc = unsafe {
+                mupdf_safe_stext_to_json(self.ctx, stpage, 1.0, &mut ptr, &mut len)
+            };
+            if rc != 0 {
+                Err(PyDocument::last_error_pub())
+            } else {
+                let s = if ptr.is_null() || len == 0 {
+                    String::new()
+                } else {
+                    unsafe {
+                        let slice = std::slice::from_raw_parts(ptr as *const u8, len);
+                        String::from_utf8_lossy(slice).into_owned()
+                    }
+                };
+                if !ptr.is_null() {
+                    unsafe { mupdf_sys::mupdf_free(ptr as *mut _) };
+                }
+                Ok(s)
+            }
+        } else {
+            self.text_to_string(stpage, mode)
+        };
+
         unsafe { mupdf_safe_drop_stext_page(self.ctx, stpage) };
+        result
+    }
+
+    /// get_links() -> list[dict]
+    ///
+    /// PyMuPDF 兼容格式：每条链接返回字典 {kind, from, to, page?, uri?, x目的地?}。
+    /// 当前版本：仅填充 from（rect 元组）、uri 字符串、is_external 标志。
+    /// kind 用 PyMuPDF 命名：URI 外部为 "uri"，内部为 "goto"（简化处理）。
+    fn get_links(&self, py: Python<'_>) -> PyResult<Vec<Py<PyAny>>> {
+        let mut ptr: *mut c_char = ptr::null_mut();
+        let mut total_len: usize = 0;
+        let mut n: c_int = 0;
+        let rc = unsafe {
+            mupdf_safe_load_links(self.ctx, self.raw, &mut ptr, &mut total_len, &mut n)
+        };
+        if rc != 0 {
+            return Err(PyDocument::last_error_pub());
+        }
+        if n == 0 || ptr.is_null() || total_len == 0 {
+            return Ok(Vec::new());
+        }
+
+        // 解析缓冲区：每条 = 4 float + NUL 结尾 uri
+        let result = (|| -> PyResult<Vec<Py<PyAny>>> {
+            let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, total_len) };
+            let mut out = Vec::with_capacity(n as usize);
+            let mut off = 0usize;
+            for _ in 0..n {
+                if off + 16 > bytes.len() {
+                    break;
+                }
+                let x0 = f32::from_ne_bytes(bytes[off..off + 4].try_into().unwrap());
+                let y0 = f32::from_ne_bytes(bytes[off + 4..off + 8].try_into().unwrap());
+                let x1 = f32::from_ne_bytes(bytes[off + 8..off + 12].try_into().unwrap());
+                let y1 = f32::from_ne_bytes(bytes[off + 12..off + 16].try_into().unwrap());
+                off += 16;
+                // uri: NUL 结尾字符串
+                let end = bytes[off..].iter().position(|&b| b == 0).unwrap_or(0);
+                let uri = std::str::from_utf8(&bytes[off..off + end])
+                    .unwrap_or("")
+                    .to_string();
+                off += end + 1;
+
+                let dict = PyDict::new(py);
+                let is_external = uri.contains(':');
+                dict.set_item("kind", if is_external { "uri" } else { "goto" })?;
+                dict.set_item("from", (x0, y0, x1, y1))?;
+                dict.set_item("to", (x0, y0, x1, y1))?;
+                if !uri.is_empty() {
+                    dict.set_item("uri", uri.clone())?;
+                }
+                dict.set_item("is_external", is_external)?;
+                out.push(dict.unbind().into_any());
+            }
+            Ok(out)
+        })();
+
+        unsafe { mupdf_sys::mupdf_free(ptr as *mut _) };
         result
     }
 
