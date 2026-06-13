@@ -5,11 +5,13 @@
 
 use pyo3::prelude::*;
 
+mod batch;
 mod document;
 mod page;
 mod pixmap;
 pub mod value;
 
+pub use batch::process_documents;
 pub use document::PyDocument;
 pub use page::PyPage;
 pub use pixmap::PyPixmap;
@@ -21,5 +23,6 @@ fn _ritz(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyDocument>()?;
     m.add_class::<PyPage>()?;
     m.add_class::<PyPixmap>()?;
+    m.add_function(wrap_pyfunction!(process_documents, m)?)?;
     Ok(())
 }

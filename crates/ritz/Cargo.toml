@@ -14,3 +14,4 @@ crate-type = ["cdylib", "rlib"]
 mupdf = { path = "../mupdf", version = "0.1.0" }
 mupdf-sys = { path = "../mupdf-sys", version = "0.1.0" }
 pyo3 = { version = "0.29", features = ["extension-module"] }
+rayon = "1.10"
