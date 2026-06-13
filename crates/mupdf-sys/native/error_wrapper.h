@@ -72,6 +72,40 @@ int mupdf_safe_stext_to_json(fz_context *ctx, fz_stext_page *stpage, float scale
  */
 int mupdf_safe_stext_to_words(fz_context *ctx, fz_stext_page *stpage,
                               char **out, size_t *out_len, int *total_n);
+/*
+ * 块级扁平化：每个 block 输出
+ *   [4 float bbox][3 int (block_no, block_type, text_len)][N utf8 bytes]
+ * text 块的 text 内多行用 \n 分隔。image 块 text_len=0。
+ */
+int mupdf_safe_stext_to_blocks(fz_context *ctx, fz_stext_page *stpage,
+                               char **out, size_t *out_len, int *total_n);
+/*
+ * dict 模式：返回 PyMuPDF 兼容的嵌套结构（扁平化为二进制 buffer）。
+ *
+ * 布局（按字节顺序，little-endian / native）：
+ *   page_header:
+ *     [block_count: i32]
+ *   for each block:
+ *     [type: i32]               // 0=text, 1=image, 2=struct(skip)
+ *     [bbox: 4 floats]
+ *     [line_count: i32]         // 0 for image
+ *     for each line:
+ *       [bbox: 4 floats]
+ *       [wmode: i32]
+ *       [dir: 2 floats]
+ *       [span_count: i32]
+ *       for each span:
+ *         [bbox: 4 floats]
+ *         [color: i32]          // sRGB int (r<<16 | g<<8 | b)
+ *         [flags: i32]
+ *         [size: f32]
+ *         [font_len: i32][font bytes]
+ *         [text_len: i32][text bytes]
+ *
+ * chars 信息（rawdict 模式）后续扩展。
+ */
+int mupdf_safe_stext_to_dict(fz_context *ctx, fz_stext_page *stpage,
+                             char **out, size_t *out_len);
 
 /* ---- 像素图（pixmap）渲染 ---- */
 /* zoom=1.0 为原始 DPI(72)，alpha=1 带透明通道 */

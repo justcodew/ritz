@@ -538,6 +538,271 @@ int mupdf_safe_stext_to_words(fz_context *ctx, fz_stext_page *stpage,
     return 0;
 }
 
+/*
+ * 块级提取：与 PyMuPDF get_text("blocks") 对齐。
+ *
+ * 对每个 stext_block：
+ *   - text 块：text = 各 line 的字符串联，line 间用 \n
+ *   - image 块：text_len = 0
+ * 输出格式（每条记录连续写入）：
+ *   [x0,y0,x1,y1: 4 * float]   16B
+ *   [block_no, block_type, text_len: 3 * int]  12B
+ *   [utf8 bytes]                text_len B
+ */
+int mupdf_safe_stext_to_blocks(fz_context *ctx, fz_stext_page *stpage,
+                               char **out, size_t *out_len, int *total_n) {
+    if (!ctx || !stpage || !out || !out_len || !total_n) return -1;
+    *out = NULL;
+    *out_len = 0;
+    *total_n = 0;
+
+    /* 第一遍：统计总长度和块数 */
+    size_t total = 0;
+    int n_blocks = 0;
+    int block_no = 0;
+    for (fz_stext_block *blk = stpage->first_block; blk; blk = blk->next) {
+        size_t text_bytes = 0;
+        if (blk->type == FZ_STEXT_BLOCK_TEXT) {
+            int line_idx = 0;
+            for (fz_stext_line *line = blk->u.t.first_line; line; line = line->next) {
+                if (line_idx > 0) text_bytes += 1; /* \n */
+                for (fz_stext_char *ch = line->first_char; ch; ch = ch->next) {
+                    char tmp[8];
+                    int len = fz_runetochar(tmp, ch->c);
+                    text_bytes += len;
+                }
+                line_idx++;
+            }
+        }
+        total += 28 + text_bytes;
+        n_blocks++;
+        block_no++;
+    }
+
+    if (n_blocks == 0) {
+        return 0;
+    }
+
+    char *buf = (char *)malloc(total);
+    if (!buf) {
+        set_error("stext blocks: out of memory (%zu bytes)", total);
+        return -1;
+    }
+
+    /* 第二遍：写入 */
+    char *p = buf;
+    block_no = 0;
+    for (fz_stext_block *blk = stpage->first_block; blk; blk = blk->next) {
+        /* bbox */
+        float coords[4] = { blk->bbox.x0, blk->bbox.y0, blk->bbox.x1, blk->bbox.y1 };
+        memcpy(p, coords, sizeof(coords));
+        p += 16;
+        int bno = block_no;
+        int btype = (blk->type == FZ_STEXT_BLOCK_IMAGE) ? 1 : 0;
+        /* 先记 text 起点，写完 text 后回头填 text_len */
+        memcpy(p, &bno, 4);
+        memcpy(p + 4, &btype, 4);
+        char *len_slot = p + 8;
+        p += 12;
+
+        size_t text_bytes = 0;
+        if (blk->type == FZ_STEXT_BLOCK_TEXT) {
+            int line_idx = 0;
+            for (fz_stext_line *line = blk->u.t.first_line; line; line = line->next) {
+                if (line_idx > 0) {
+                    *p++ = '\n';
+                    text_bytes += 1;
+                }
+                for (fz_stext_char *ch = line->first_char; ch; ch = ch->next) {
+                    char tmp[8];
+                    int len = fz_runetochar(tmp, ch->c);
+                    memcpy(p, tmp, len);
+                    p += len;
+                    text_bytes += len;
+                }
+                line_idx++;
+            }
+        }
+        int hdr_len = (int)text_bytes;
+        memcpy(len_slot, &hdr_len, 4);
+
+        block_no++;
+    }
+
+    *out = buf;
+    *out_len = total;
+    *total_n = n_blocks;
+    return 0;
+}
+
+/* ====================================================================
+ * dict / rawdict 模式
+ * ==================================================================== */
+
+/*
+ * span 边界判断：相邻 char 的 (font,size,color,flags) 相同时归为同一 span。
+ */
+static int span_compat(fz_stext_char *a, fz_stext_char *b) {
+    return a->font == b->font
+        && a->size == b->size
+        && a->argb == b->argb
+        && a->flags == b->flags;
+}
+
+/*
+ * 简易动态缓冲区（可按偏移写），避免 fz_buffer 不能原地修改的限制。
+ */
+typedef struct {
+    unsigned char *data;
+    size_t len;
+    size_t cap;
+} growbuf;
+
+static int gb_ensure(fz_context *ctx, growbuf *gb, size_t extra) {
+    if (gb->len + extra <= gb->cap) return 0;
+    size_t newcap = gb->cap ? gb->cap : 1024;
+    while (newcap < gb->len + extra) newcap *= 2;
+    unsigned char *nd = (unsigned char *)fz_realloc(ctx, gb->data, newcap);
+    if (!nd) return -1;
+    gb->data = nd;
+    gb->cap = newcap;
+    return 0;
+}
+
+static void gb_put(fz_context *ctx, growbuf *gb, const void *src, size_t n) {
+    if (gb_ensure(ctx, gb, n)) fz_throw(ctx, FZ_ERROR_SYSTEM, "oom");
+    memcpy(gb->data + gb->len, src, n);
+    gb->len += n;
+}
+
+int mupdf_safe_stext_to_dict(fz_context *ctx, fz_stext_page *stpage,
+                             char **out, size_t *out_len) {
+    if (!ctx || !stpage || !out || !out_len) return -1;
+    *out = NULL;
+    *out_len = 0;
+
+    growbuf gb = {0, 0, 0};
+
+    mupdf_clear_error();
+    fz_try(ctx) {
+        /* 占位 block_count，最后回填 */
+        size_t block_count_pos = gb.len;
+        int block_count = 0;
+        gb_put(ctx, &gb, &(int){0}, 4);
+
+        for (fz_stext_block *blk = stpage->first_block; blk; blk = blk->next) {
+            if (blk->type != FZ_STEXT_BLOCK_TEXT && blk->type != FZ_STEXT_BLOCK_IMAGE) {
+                continue;
+            }
+            int btype = (blk->type == FZ_STEXT_BLOCK_IMAGE) ? 1 : 0;
+            gb_put(ctx, &gb, &btype, 4);
+            float bbox[4] = { blk->bbox.x0, blk->bbox.y0, blk->bbox.x1, blk->bbox.y1 };
+            gb_put(ctx, &gb, bbox, sizeof(bbox));
+
+            if (btype == 1) {
+                int zero = 0;
+                gb_put(ctx, &gb, &zero, 4);
+                block_count++;
+                continue;
+            }
+
+            /* text 块：line_count 占位 */
+            size_t lc_pos = gb.len;
+            int line_count = 0;
+            gb_put(ctx, &gb, &(int){0}, 4);
+
+            for (fz_stext_line *line = blk->u.t.first_line; line; line = line->next) {
+                float lbbox[4] = { line->bbox.x0, line->bbox.y0, line->bbox.x1, line->bbox.y1 };
+                gb_put(ctx, &gb, lbbox, sizeof(lbbox));
+                gb_put(ctx, &gb, &line->wmode, 4);
+                float dir[2] = { line->dir.x, line->dir.y };
+                gb_put(ctx, &gb, dir, sizeof(dir));
+
+                /* span_count 占位 */
+                size_t sc_pos = gb.len;
+                int span_count = 0;
+                gb_put(ctx, &gb, &(int){0}, 4);
+
+                fz_stext_char *ch = line->first_char;
+                while (ch) {
+                    fz_stext_char *span_start = ch;
+                    fz_stext_char *span_end = ch;
+                    while (span_end->next && span_compat(span_end, span_end->next)) {
+                        span_end = span_end->next;
+                    }
+
+                    /* span bbox = char quads 并集 */
+                    float sx0 = 1e30f, sy0 = 1e30f, sx1 = -1e30f, sy1 = -1e30f;
+                    for (fz_stext_char *c = span_start; ; c = c->next) {
+                        fz_quad q = c->quad;
+                        float cx0 = q.ul.x < q.ll.x ? q.ul.x : q.ll.x;
+                        float cy0 = q.ul.y < q.ur.y ? q.ul.y : q.ur.y;
+                        float cx1 = q.lr.x > q.ur.x ? q.lr.x : q.ur.x;
+                        float cy1 = q.lr.y > q.ll.y ? q.lr.y : q.ll.y;
+                        if (cx0 < sx0) sx0 = cx0;
+                        if (cy0 < sy0) sy0 = cy0;
+                        if (cx1 > sx1) sx1 = cx1;
+                        if (cy1 > sy1) sy1 = cy1;
+                        if (c == span_end) break;
+                    }
+                    float sbbox[4] = { sx0, sy0, sx1, sy1 };
+                    gb_put(ctx, &gb, sbbox, sizeof(sbbox));
+
+                    /* color: sRGB int (r<<16 | g<<8 | b) */
+                    uint32_t argb = span_start->argb;
+                    int color = (int)(((argb >> 16) & 0xff) << 16 |
+                                      ((argb >> 8) & 0xff) << 8 |
+                                      (argb & 0xff));
+                    gb_put(ctx, &gb, &color, 4);
+
+                    gb_put(ctx, &gb, &span_start->flags, 4);
+                    gb_put(ctx, &gb, &span_start->size, 4);
+
+                    /* font name */
+                    const char *fname = fz_font_name(ctx, span_start->font);
+                    if (!fname) fname = "";
+                    int fname_len = (int)strlen(fname);
+                    gb_put(ctx, &gb, &fname_len, 4);
+                    if (fname_len > 0) gb_put(ctx, &gb, fname, fname_len);
+
+                    /* text: 先写 len 占位，遍历后回填 */
+                    size_t text_len_pos = gb.len;
+                    int text_len = 0;
+                    gb_put(ctx, &gb, &(int){0}, 4);
+                    for (fz_stext_char *c = span_start; ; c = c->next) {
+                        char tmp[8];
+                        int n = fz_runetochar(tmp, c->c);
+                        gb_put(ctx, &gb, tmp, n);
+                        text_len += n;
+                        if (c == span_end) break;
+                    }
+                    memcpy(gb.data + text_len_pos, &text_len, 4);
+
+                    span_count++;
+                    ch = span_end->next;
+                }
+
+                memcpy(gb.data + sc_pos, &span_count, 4);
+                line_count++;
+            }
+
+            memcpy(gb.data + lc_pos, &line_count, 4);
+            block_count++;
+        }
+
+        memcpy(gb.data + block_count_pos, &block_count, 4);
+    }
+    fz_catch(ctx) {
+        set_error("stext dict: %s", fz_caught_message(ctx));
+        if (gb.data) fz_free(ctx, gb.data);
+        return -1;
+    }
+
+    *out = (char *)gb.data;
+    *out_len = gb.len;
+    return 0;
+}
+
 /* ====================================================================
  * 链接（links）
  * ==================================================================== */

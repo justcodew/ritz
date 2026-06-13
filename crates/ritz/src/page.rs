@@ -5,9 +5,10 @@ use crate::pixmap::PyPixmap;
 use mupdf_sys::{
     self, fz_context, fz_page, mupdf_safe_bound_page, mupdf_safe_bound_page_box,
     mupdf_safe_drop_page, mupdf_safe_drop_stext_page, mupdf_safe_load_links,
-    mupdf_safe_new_stext_page, mupdf_safe_render_pixmap, mupdf_safe_stext_to_html,
-    mupdf_safe_stext_to_json, mupdf_safe_stext_to_text, mupdf_safe_stext_to_words,
-    mupdf_safe_stext_to_xml, fz_pixmap, fz_stext_page,
+    mupdf_safe_new_stext_page, mupdf_safe_render_pixmap, mupdf_safe_stext_to_blocks,
+    mupdf_safe_stext_to_dict, mupdf_safe_stext_to_html, mupdf_safe_stext_to_json,
+    mupdf_safe_stext_to_text, mupdf_safe_stext_to_words, mupdf_safe_stext_to_xml, fz_pixmap,
+    fz_stext_page,
 };
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -75,11 +76,12 @@ impl PyPage {
         (r.x0, r.y0, r.x1, r.y1)
     }
 
-    /// get_text(mode="text") -> str | list
+    /// get_text(mode="text") -> str | list | dict
     ///
     /// 文本模式（返回 str）：text / html / xml / json
-    /// 结构模式（返回 list）：words
-    /// 其它模式（blocks / dict / rawdict）将在阶段三后续补。
+    /// 结构模式（返回 list）：words / blocks
+    /// 嵌套模式（返回 dict）：dict
+    /// rawdict 将在后续补（含每个 char 的 bbox/origin）。
     #[pyo3(signature = (mode = "text"))]
     fn get_text(&self, py: Python<'_>, mode: &str) -> PyResult<Py<PyAny>> {
         let mut stpage: *mut fz_stext_page = ptr::null_mut();
@@ -92,8 +94,10 @@ impl PyPage {
             "text" | "html" | "xml" => self.stext_to_string(py, stpage, mode),
             "json" => self.stext_to_json(py, stpage, 1.0),
             "words" => self.stext_to_words(py, stpage),
+            "blocks" => self.stext_to_blocks(py, stpage),
+            "dict" => self.stext_to_dict(py, stpage),
             other => Err(PyRuntimeError::new_err(format!(
-                "unsupported text mode: '{}' (supported: text, html, xml, json, words)",
+                "unsupported text mode: '{}' (supported: text, html, xml, json, words, blocks, dict)",
                 other
             ))),
         };
@@ -280,6 +284,179 @@ impl PyPage {
                 items.push((x0, y0, x1, y1, s, block_no, line_no, word_no));
             }
             Ok(items.into_pyobject(py)?.into_any().unbind())
+        })();
+
+        unsafe { mupdf_sys::mupdf_free(ptr as *mut _) };
+        result
+    }
+
+    /// 块级提取：返回 PyMuPDF 兼容 list of tuples
+    ///   (x0, y0, x1, y1, "block text", block_no, block_type)
+    fn stext_to_blocks(&self, py: Python<'_>, stpage: *mut fz_stext_page) -> PyResult<Py<PyAny>> {
+        let mut ptr: *mut c_char = ptr::null_mut();
+        let mut total_len: usize = 0;
+        let mut n: c_int = 0;
+        let rc = unsafe {
+            mupdf_safe_stext_to_blocks(self.ctx, stpage, &mut ptr, &mut total_len, &mut n)
+        };
+        if rc != 0 {
+            return Err(PyDocument::last_error_pub());
+        }
+        if n == 0 || ptr.is_null() || total_len == 0 {
+            return Ok(Vec::<(f32, f32, f32, f32, String, i32, i32)>::new()
+                .into_pyobject(py)?
+                .into_any()
+                .unbind());
+        }
+
+        let result = (|| -> PyResult<Py<PyAny>> {
+            let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, total_len) };
+            let mut items: Vec<(f32, f32, f32, f32, String, i32, i32)> =
+                Vec::with_capacity(n as usize);
+            let mut off = 0usize;
+            for _ in 0..n {
+                if off + 28 > bytes.len() {
+                    break;
+                }
+                let x0 = f32::from_ne_bytes(bytes[off..off + 4].try_into().unwrap());
+                let y0 = f32::from_ne_bytes(bytes[off + 4..off + 8].try_into().unwrap());
+                let x1 = f32::from_ne_bytes(bytes[off + 8..off + 12].try_into().unwrap());
+                let y1 = f32::from_ne_bytes(bytes[off + 12..off + 16].try_into().unwrap());
+                let block_no = i32::from_ne_bytes(bytes[off + 16..off + 20].try_into().unwrap());
+                let block_type = i32::from_ne_bytes(bytes[off + 20..off + 24].try_into().unwrap());
+                let text_len = i32::from_ne_bytes(bytes[off + 24..off + 28].try_into().unwrap()) as usize;
+                off += 28;
+                if off + text_len > bytes.len() {
+                    break;
+                }
+                let s = std::str::from_utf8(&bytes[off..off + text_len])
+                    .unwrap_or("")
+                    .to_string();
+                off += text_len;
+                items.push((x0, y0, x1, y1, s, block_no, block_type));
+            }
+            Ok(items.into_pyobject(py)?.into_any().unbind())
+        })();
+
+        unsafe { mupdf_sys::mupdf_free(ptr as *mut _) };
+        result
+    }
+
+    /// dict 模式：解析 C 层二进制 buffer，构造 PyMuPDF 兼容嵌套 dict。
+    fn stext_to_dict(&self, py: Python<'_>, stpage: *mut fz_stext_page) -> PyResult<Py<PyAny>> {
+        let mut ptr: *mut c_char = ptr::null_mut();
+        let mut total_len: usize = 0;
+        let rc = unsafe { mupdf_safe_stext_to_dict(self.ctx, stpage, &mut ptr, &mut total_len) };
+        if rc != 0 {
+            return Err(PyDocument::last_error_pub());
+        }
+        if ptr.is_null() || total_len < 4 {
+            // 空结构：返回 {"blocks": []}
+            let d = PyDict::new(py);
+            d.set_item("blocks", Vec::<Py<PyAny>>::new().into_pyobject(py)?.into_any().unbind())?;
+            return Ok(d.into_any().unbind());
+        }
+
+        let result = (|| -> PyResult<Py<PyAny>> {
+            let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, total_len) };
+            let mut off = 0usize;
+            let need = |n: usize, off: usize, bytes: &[u8]| -> PyResult<()> {
+                if off + n > bytes.len() {
+                    return Err(PyRuntimeError::new_err(format!(
+                        "dict buffer underrun at offset {} need {} have {}",
+                        off, n, bytes.len()
+                    )));
+                }
+                Ok(())
+            };
+            let take_i32 = |off: &mut usize, bytes: &[u8]| -> PyResult<i32> {
+                need(4, *off, bytes)?;
+                let v = i32::from_ne_bytes(bytes[*off..*off + 4].try_into().unwrap());
+                *off += 4;
+                Ok(v)
+            };
+            let take_f32 = |off: &mut usize, bytes: &[u8]| -> PyResult<f32> {
+                need(4, *off, bytes)?;
+                let v = f32::from_ne_bytes(bytes[*off..*off + 4].try_into().unwrap());
+                *off += 4;
+                Ok(v)
+            };
+            let take_str = |off: &mut usize, bytes: &[u8]| -> PyResult<String> {
+                let len = take_i32(off, bytes)? as usize;
+                need(len, *off, bytes)?;
+                let s = std::str::from_utf8(&bytes[*off..*off + len])
+                    .unwrap_or("")
+                    .to_string();
+                *off += len;
+                Ok(s)
+            };
+
+            let block_count = take_i32(&mut off, bytes)? as usize;
+            let mut blocks: Vec<Py<PyAny>> = Vec::with_capacity(block_count);
+            for _ in 0..block_count {
+                let btype = take_i32(&mut off, bytes)?;
+                let x0 = take_f32(&mut off, bytes)?;
+                let y0 = take_f32(&mut off, bytes)?;
+                let x1 = take_f32(&mut off, bytes)?;
+                let y1 = take_f32(&mut off, bytes)?;
+                let line_count = take_i32(&mut off, bytes)? as usize;
+
+                let block_dict = PyDict::new(py);
+                block_dict.set_item("type", btype)?;
+                block_dict.set_item("bbox", (x0, y0, x1, y1))?;
+
+                if btype == 1 {
+                    // image 块：无 lines。简化，不输出 image 数据。
+                    block_dict.set_item("lines", Vec::<Py<PyAny>>::new().into_pyobject(py)?.into_any().unbind())?;
+                } else {
+                    let mut lines: Vec<Py<PyAny>> = Vec::with_capacity(line_count);
+                    for _ in 0..line_count {
+                        let lx0 = take_f32(&mut off, bytes)?;
+                        let ly0 = take_f32(&mut off, bytes)?;
+                        let lx1 = take_f32(&mut off, bytes)?;
+                        let ly1 = take_f32(&mut off, bytes)?;
+                        let wmode = take_i32(&mut off, bytes)?;
+                        let dir_x = take_f32(&mut off, bytes)?;
+                        let dir_y = take_f32(&mut off, bytes)?;
+                        let span_count = take_i32(&mut off, bytes)? as usize;
+
+                        let line_dict = PyDict::new(py);
+                        line_dict.set_item("bbox", (lx0, ly0, lx1, ly1))?;
+                        line_dict.set_item("wmode", wmode)?;
+                        line_dict.set_item("dir", (dir_x, dir_y))?;
+
+                        let mut spans: Vec<Py<PyAny>> = Vec::with_capacity(span_count);
+                        for _ in 0..span_count {
+                            let sx0 = take_f32(&mut off, bytes)?;
+                            let sy0 = take_f32(&mut off, bytes)?;
+                            let sx1 = take_f32(&mut off, bytes)?;
+                            let sy1 = take_f32(&mut off, bytes)?;
+                            let color = take_i32(&mut off, bytes)?;
+                            let flags = take_i32(&mut off, bytes)?;
+                            let size = take_f32(&mut off, bytes)?;
+                            let font = take_str(&mut off, bytes)?;
+                            let text = take_str(&mut off, bytes)?;
+
+                            let span_dict = PyDict::new(py);
+                            span_dict.set_item("bbox", (sx0, sy0, sx1, sy1))?;
+                            span_dict.set_item("color", color)?;
+                            span_dict.set_item("flags", flags)?;
+                            span_dict.set_item("size", size)?;
+                            span_dict.set_item("font", font)?;
+                            span_dict.set_item("text", text)?;
+                            spans.push(span_dict.into_any().unbind());
+                        }
+                        line_dict.set_item("spans", spans.into_pyobject(py)?.into_any().unbind())?;
+                        lines.push(line_dict.into_any().unbind());
+                    }
+                    block_dict.set_item("lines", lines.into_pyobject(py)?.into_any().unbind())?;
+                }
+                blocks.push(block_dict.into_any().unbind());
+            }
+
+            let page_dict = PyDict::new(py);
+            page_dict.set_item("blocks", blocks.into_pyobject(py)?.into_any().unbind())?;
+            Ok(page_dict.into_any().unbind())
         })();
 
         unsafe { mupdf_sys::mupdf_free(ptr as *mut _) };
