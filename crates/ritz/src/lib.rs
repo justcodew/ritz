@@ -8,10 +8,12 @@ use pyo3::prelude::*;
 mod document;
 mod page;
 mod pixmap;
+pub mod value;
 
 pub use document::PyDocument;
 pub use page::PyPage;
 pub use pixmap::PyPixmap;
+pub use value::PdfValue;
 
 #[pymodule]
 fn _ritz(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
