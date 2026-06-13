@@ -155,6 +155,12 @@ extern "C" {
         box_type: std::os::raw::c_int,
     ) -> fz_rect;
 
+    pub fn mupdf_safe_page_rotation(
+        ctx: *mut fz_context,
+        doc: *mut fz_document,
+        page: *mut fz_page,
+    ) -> std::os::raw::c_int;
+
     /* ---- 结构化文本（stext） ---- */
 
     pub fn mupdf_safe_new_stext_page(

@@ -5,10 +5,11 @@ use crate::pixmap::PyPixmap;
 use mupdf_sys::{
     self, fz_context, fz_page, mupdf_safe_bound_page, mupdf_safe_bound_page_box,
     mupdf_safe_drop_page, mupdf_safe_drop_stext_page, mupdf_safe_get_images,
-    mupdf_safe_load_links, mupdf_safe_new_stext_page, mupdf_safe_render_pixmap,
-    mupdf_safe_stext_to_blocks, mupdf_safe_stext_to_dict, mupdf_safe_stext_to_html,
-    mupdf_safe_stext_to_json, mupdf_safe_stext_to_text, mupdf_safe_stext_to_words,
-    mupdf_safe_stext_to_xml, mupdf_safe_stext_to_xhtml, fz_pixmap, fz_stext_page,
+    mupdf_safe_load_links, mupdf_safe_new_stext_page, mupdf_safe_page_rotation,
+    mupdf_safe_render_pixmap, mupdf_safe_stext_to_blocks, mupdf_safe_stext_to_dict,
+    mupdf_safe_stext_to_html, mupdf_safe_stext_to_json, mupdf_safe_stext_to_text,
+    mupdf_safe_stext_to_words, mupdf_safe_stext_to_xml, mupdf_safe_stext_to_xhtml,
+    fz_pixmap, fz_stext_page,
 };
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -74,6 +75,15 @@ impl PyPage {
     fn cropbox(&self) -> (f32, f32, f32, f32) {
         let r = unsafe { mupdf_safe_bound_page_box(self.ctx, self.raw, 1) };
         (r.x0, r.y0, r.x1, r.y1)
+    }
+
+    /// rotation（0/90/180/270）。仅 PDF 文档有效，非 PDF 返回 0。
+    #[getter]
+    fn rotation(&self, py: Python<'_>) -> i32 {
+        let doc = self.doc_handle.bind(py).borrow();
+        let doc_ptr = doc.raw;
+        drop(doc);
+        unsafe { mupdf_safe_page_rotation(self.ctx, doc_ptr, self.raw) as i32 }
     }
 
     /// get_text(mode="text") -> str | list | dict

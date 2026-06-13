@@ -12,6 +12,7 @@
  */
 
 #include "error_wrapper.h"
+#include <mupdf/pdf.h>
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
@@ -235,6 +236,30 @@ fz_rect mupdf_safe_bound_page_box(fz_context *ctx, fz_page *page, int box_type) 
         r = fz_make_rect(0, 0, 0, 0);
     }
     return r;
+}
+
+/* rotation 仅对 PDF 文档有意义：读 /Rotate（0/90/180/270）。
+ * 非 PDF 返回 0。fz_page 自身没有 rotation 概念。 */
+int mupdf_safe_page_rotation(fz_context *ctx, fz_document *doc, fz_page *page) {
+    if (!ctx || !doc || !page) return 0;
+    int rot = 0;
+    mupdf_clear_error();
+    fz_try(ctx) {
+        pdf_document *pdf = pdf_document_from_fz_document(ctx, doc);
+        if (!pdf) {
+            fz_throw(ctx, FZ_ERROR_GENERIC, "not a pdf document");
+        }
+        pdf_page *pg = (pdf_page *)page;
+        if (!pg->obj) {
+            fz_throw(ctx, FZ_ERROR_GENERIC, "page has no pdf obj");
+        }
+        rot = pdf_dict_get_inheritable_int(ctx, pg->obj, PDF_NAME(Rotate));
+    }
+    fz_catch(ctx) {
+        /* 静默：rotation 对非 PDF 是 0，错误也算 0 */
+        rot = 0;
+    }
+    return rot;
 }
 
 /* ====================================================================

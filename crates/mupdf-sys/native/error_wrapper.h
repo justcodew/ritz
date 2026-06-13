@@ -50,6 +50,8 @@ void mupdf_safe_drop_page(fz_context *ctx, fz_page *page);
 fz_rect mupdf_safe_bound_page(fz_context *ctx, fz_page *page);
 /* box_type: 0=media,1=crop,2=bleed,3=trim,4=art */
 fz_rect mupdf_safe_bound_page_box(fz_context *ctx, fz_page *page, int box_type);
+/* rotation: 仅 PDF，读 /Rotate；非 PDF 或失败返回 0 */
+int mupdf_safe_page_rotation(fz_context *ctx, fz_document *doc, fz_page *page);
 
 /* ---- 结构化文本（stext） ---- */
 int mupdf_safe_new_stext_page(fz_context *ctx, fz_page *page, fz_stext_page **out);
