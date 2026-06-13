@@ -6,8 +6,8 @@ use mupdf_sys::{
     self, fz_context, fz_page, mupdf_safe_bound_page, mupdf_safe_bound_page_box,
     mupdf_safe_drop_page, mupdf_safe_drop_stext_page, mupdf_safe_load_links,
     mupdf_safe_new_stext_page, mupdf_safe_render_pixmap, mupdf_safe_stext_to_html,
-    mupdf_safe_stext_to_json, mupdf_safe_stext_to_text, mupdf_safe_stext_to_xml, fz_pixmap,
-    fz_stext_page,
+    mupdf_safe_stext_to_json, mupdf_safe_stext_to_text, mupdf_safe_stext_to_words,
+    mupdf_safe_stext_to_xml, fz_pixmap, fz_stext_page,
 };
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -18,7 +18,7 @@ use std::ptr;
 /// Page — 单页（绑定到一个 Document 上）。
 ///
 /// 安全性：Page 持有 `Py<PyDocument>` 引用计数，确保 Document 不会先于 Page 被 GC。
-/// Drop 顺序：raw_page 先 drop（借用 ctx），然后 _doc 释放引用（可能触发 Document GC）。
+/// Drop 顺序：raw_page 先 drop（借用 ctx），然后 doc_handle 释放引用（可能触发 Document GC）。
 #[pyclass(name = "Page")]
 pub struct PyPage {
     pub(crate) ctx: *mut fz_context,
@@ -75,42 +75,27 @@ impl PyPage {
         (r.x0, r.y0, r.x1, r.y1)
     }
 
-    /// get_text(mode="text") -> str
+    /// get_text(mode="text") -> str | list
     ///
-    /// 支持模式：text / html / xml / json（words/blocks/rawdict 在阶段三后续补）。
+    /// 文本模式（返回 str）：text / html / xml / json
+    /// 结构模式（返回 list）：words
+    /// 其它模式（blocks / dict / rawdict）将在阶段三后续补。
     #[pyo3(signature = (mode = "text"))]
-    fn get_text(&self, mode: &str) -> PyResult<String> {
+    fn get_text(&self, py: Python<'_>, mode: &str) -> PyResult<Py<PyAny>> {
         let mut stpage: *mut fz_stext_page = ptr::null_mut();
         let rc = unsafe { mupdf_safe_new_stext_page(self.ctx, self.raw, &mut stpage) };
         if rc != 0 || stpage.is_null() {
             return Err(PyDocument::last_error_pub());
         }
 
-        // json 模式单独处理（签名不同：scale 而非 id）
-        let result = if mode == "json" {
-            let mut ptr: *mut c_char = ptr::null_mut();
-            let mut len: usize = 0;
-            let rc = unsafe {
-                mupdf_safe_stext_to_json(self.ctx, stpage, 1.0, &mut ptr, &mut len)
-            };
-            if rc != 0 {
-                Err(PyDocument::last_error_pub())
-            } else {
-                let s = if ptr.is_null() || len == 0 {
-                    String::new()
-                } else {
-                    unsafe {
-                        let slice = std::slice::from_raw_parts(ptr as *const u8, len);
-                        String::from_utf8_lossy(slice).into_owned()
-                    }
-                };
-                if !ptr.is_null() {
-                    unsafe { mupdf_sys::mupdf_free(ptr as *mut _) };
-                }
-                Ok(s)
-            }
-        } else {
-            self.text_to_string(stpage, mode)
+        let result = match mode {
+            "text" | "html" | "xml" => self.stext_to_string(py, stpage, mode),
+            "json" => self.stext_to_json(py, stpage, 1.0),
+            "words" => self.stext_to_words(py, stpage),
+            other => Err(PyRuntimeError::new_err(format!(
+                "unsupported text mode: '{}' (supported: text, html, xml, json, words)",
+                other
+            ))),
         };
 
         unsafe { mupdf_safe_drop_stext_page(self.ctx, stpage) };
@@ -119,9 +104,7 @@ impl PyPage {
 
     /// get_links() -> list[dict]
     ///
-    /// PyMuPDF 兼容格式：每条链接返回字典 {kind, from, to, page?, uri?, x目的地?}。
-    /// 当前版本：仅填充 from（rect 元组）、uri 字符串、is_external 标志。
-    /// kind 用 PyMuPDF 命名：URI 外部为 "uri"，内部为 "goto"（简化处理）。
+    /// PyMuPDF 兼容格式：每条链接返回字典 {kind, from, to, uri?, is_external}。
     fn get_links(&self, py: Python<'_>) -> PyResult<Vec<Py<PyAny>>> {
         let mut ptr: *mut c_char = ptr::null_mut();
         let mut total_len: usize = 0;
@@ -136,7 +119,6 @@ impl PyPage {
             return Ok(Vec::new());
         }
 
-        // 解析缓冲区：每条 = 4 float + NUL 结尾 uri
         let result = (|| -> PyResult<Vec<Py<PyAny>>> {
             let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, total_len) };
             let mut out = Vec::with_capacity(n as usize);
@@ -150,7 +132,6 @@ impl PyPage {
                 let x1 = f32::from_ne_bytes(bytes[off + 8..off + 12].try_into().unwrap());
                 let y1 = f32::from_ne_bytes(bytes[off + 12..off + 16].try_into().unwrap());
                 off += 16;
-                // uri: NUL 结尾字符串
                 let end = bytes[off..].iter().position(|&b| b == 0).unwrap_or(0);
                 let uri = std::str::from_utf8(&bytes[off..off + end])
                     .unwrap_or("")
@@ -191,8 +172,6 @@ impl PyPage {
         let zoom = if let Some(d) = dpi {
             d / 72.0
         } else if let Some(m) = matrix {
-            // 仅取 a、d 作为水平/垂直缩放，取较大者作为整体 zoom。
-            // 完整 matrix 变换留到阶段三（需要新增 fz_pre_scale 等绑定）。
             m.0.max(m.3)
         } else {
             1.0
@@ -205,7 +184,6 @@ impl PyPage {
         if rc != 0 || pix.is_null() {
             return Err(PyDocument::last_error_pub());
         }
-        // clone_ref 拿到 Py<PyDocument>，让 Pixmap 持有引用，避免 doc 先于 pix 被 GC
         Ok(PyPixmap::new(self.doc_handle.clone_ref(py), self.ctx, pix))
     }
 
@@ -215,7 +193,7 @@ impl PyPage {
 }
 
 impl PyPage {
-    fn text_to_string(&self, stpage: *mut fz_stext_page, mode: &str) -> PyResult<String> {
+    fn stext_to_string(&self, py: Python<'_>, stpage: *mut fz_stext_page, mode: &str) -> PyResult<Py<PyAny>> {
         let mut ptr: *mut c_char = ptr::null_mut();
         let mut len: usize = 0;
         let rc = unsafe {
@@ -223,29 +201,99 @@ impl PyPage {
                 "text" => mupdf_safe_stext_to_text(self.ctx, stpage, &mut ptr, &mut len),
                 "html" => mupdf_safe_stext_to_html(self.ctx, stpage, &mut ptr, &mut len),
                 "xml" => mupdf_safe_stext_to_xml(self.ctx, stpage, &mut ptr, &mut len),
-                other => {
-                    return Err(PyRuntimeError::new_err(format!(
-                        "unsupported text mode: '{}' (supported: text, html, xml)",
-                        other
-                    )));
-                }
+                _ => unreachable!(),
             }
         };
         if rc != 0 {
             return Err(PyDocument::last_error_pub());
         }
-        let s = if ptr.is_null() || len == 0 {
-            String::new()
-        } else {
-            unsafe {
-                let slice = std::slice::from_raw_parts(ptr as *const u8, len);
-                String::from_utf8_lossy(slice).into_owned()
-            }
-        };
+        let s = cbuf_to_string(ptr, len);
         if !ptr.is_null() {
             unsafe { mupdf_sys::mupdf_free(ptr as *mut _) };
         }
-        Ok(s)
+        Ok(s.into_pyobject(py)?.into_any().unbind())
+    }
+
+    fn stext_to_json(
+        &self,
+        py: Python<'_>,
+        stpage: *mut fz_stext_page,
+        scale: f32,
+    ) -> PyResult<Py<PyAny>> {
+        let mut ptr: *mut c_char = ptr::null_mut();
+        let mut len: usize = 0;
+        let rc = unsafe { mupdf_safe_stext_to_json(self.ctx, stpage, scale, &mut ptr, &mut len) };
+        if rc != 0 {
+            return Err(PyDocument::last_error_pub());
+        }
+        let s = cbuf_to_string(ptr, len);
+        if !ptr.is_null() {
+            unsafe { mupdf_sys::mupdf_free(ptr as *mut _) };
+        }
+        Ok(s.into_pyobject(py)?.into_any().unbind())
+    }
+
+    /// 单词级提取：返回 PyMuPDF 兼容的 list of tuples
+    ///   (x0, y0, x1, y1, "word", block_no, line_no, word_no)
+    fn stext_to_words(&self, py: Python<'_>, stpage: *mut fz_stext_page) -> PyResult<Py<PyAny>> {
+        let mut ptr: *mut c_char = ptr::null_mut();
+        let mut total_len: usize = 0;
+        let mut n: c_int = 0;
+        let rc = unsafe {
+            mupdf_safe_stext_to_words(self.ctx, stpage, &mut ptr, &mut total_len, &mut n)
+        };
+        if rc != 0 {
+            return Err(PyDocument::last_error_pub());
+        }
+        if n == 0 || ptr.is_null() || total_len == 0 {
+            return Ok(Vec::<(f32, f32, f32, f32, String, i32, i32, i32)>::new()
+                .into_pyobject(py)?
+                .into_any()
+                .unbind());
+        }
+
+        let result = (|| -> PyResult<Py<PyAny>> {
+            let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, total_len) };
+            let mut items: Vec<(f32, f32, f32, f32, String, i32, i32, i32)> =
+                Vec::with_capacity(n as usize);
+            let mut off = 0usize;
+            for _ in 0..n {
+                if off + 32 > bytes.len() {
+                    break;
+                }
+                let x0 = f32::from_ne_bytes(bytes[off..off + 4].try_into().unwrap());
+                let y0 = f32::from_ne_bytes(bytes[off + 4..off + 8].try_into().unwrap());
+                let x1 = f32::from_ne_bytes(bytes[off + 8..off + 12].try_into().unwrap());
+                let y1 = f32::from_ne_bytes(bytes[off + 12..off + 16].try_into().unwrap());
+                let block_no = i32::from_ne_bytes(bytes[off + 16..off + 20].try_into().unwrap());
+                let line_no = i32::from_ne_bytes(bytes[off + 20..off + 24].try_into().unwrap());
+                let word_no = i32::from_ne_bytes(bytes[off + 24..off + 28].try_into().unwrap());
+                let str_len = i32::from_ne_bytes(bytes[off + 28..off + 32].try_into().unwrap()) as usize;
+                off += 32;
+                if off + str_len > bytes.len() {
+                    break;
+                }
+                let s = std::str::from_utf8(&bytes[off..off + str_len])
+                    .unwrap_or("")
+                    .to_string();
+                off += str_len;
+                items.push((x0, y0, x1, y1, s, block_no, line_no, word_no));
+            }
+            Ok(items.into_pyobject(py)?.into_any().unbind())
+        })();
+
+        unsafe { mupdf_sys::mupdf_free(ptr as *mut _) };
+        result
+    }
+}
+
+fn cbuf_to_string(ptr: *const c_char, len: usize) -> String {
+    if ptr.is_null() || len == 0 {
+        return String::new();
+    }
+    unsafe {
+        let slice = std::slice::from_raw_parts(ptr as *const u8, len);
+        String::from_utf8_lossy(slice).into_owned()
     }
 }
 
@@ -257,7 +305,6 @@ impl Drop for PyPage {
                 self.raw = ptr::null_mut();
             }
         }
-        // self.doc_handle 自动 drop（释放对 Document 的引用）
     }
 }
 

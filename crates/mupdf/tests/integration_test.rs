@@ -148,3 +148,27 @@ fn render_pixmap_and_png() {
     println!("PNG 字节数: {}", png.len());
     assert_eq!(&png[0..8], &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A], "PNG 头部");
 }
+
+#[test]
+fn json_and_box_types() {
+    let path = sample_pdf();
+    if !path.exists() {
+        eprintln!("跳过：测试 PDF 不存在");
+        return;
+    }
+
+    let ctx = mupdf::Context::new().expect("创建上下文失败");
+    let doc = mupdf::Document::open(&ctx, path.to_str().unwrap()).expect("打开文档失败");
+    let page = doc.page(0).expect("加载第 0 页失败");
+
+    let st = page.new_stext_page().expect("构造 stext 失败");
+    let json = st.to_json(1.0).expect("转 json 失败");
+    println!("json 长度: {}", json.len());
+    assert!(json.trim_start().starts_with('{'));
+
+    let mb = page.mediabox();
+    let cb = page.cropbox();
+    println!("mediabox={:?} cropbox={:?}", mb, cb);
+    assert!(mb.width() > 0.0 && mb.height() > 0.0);
+    assert!(cb.width() > 0.0 && cb.height() > 0.0);
+}

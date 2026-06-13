@@ -64,6 +64,14 @@ int mupdf_safe_stext_to_xml(fz_context *ctx, fz_stext_page *stpage,
 /* json: scale 是坐标缩放因子（PyMuPDF 用 1.0） */
 int mupdf_safe_stext_to_json(fz_context *ctx, fz_stext_page *stpage, float scale,
                              char **out, size_t *out_len);
+/*
+ * 单词级扁平化：遍历 stext_page 的 block→line→char 链表，按空白分词。
+ * 每个单词编码为 [4 float bbox][3 int (block_no,line_no,word_no)][4 int str_len][N utf8 bytes]，
+ * 顺序写入 malloc 缓冲区。total_n 写入单词总数。
+ * 调用方通过 mupdf_free 释放。
+ */
+int mupdf_safe_stext_to_words(fz_context *ctx, fz_stext_page *stpage,
+                              char **out, size_t *out_len, int *total_n);
 
 /* ---- 像素图（pixmap）渲染 ---- */
 /* zoom=1.0 为原始 DPI(72)，alpha=1 带透明通道 */

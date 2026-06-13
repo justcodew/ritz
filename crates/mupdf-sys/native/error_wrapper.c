@@ -365,6 +365,179 @@ int mupdf_safe_stext_to_json(fz_context *ctx, fz_stext_page *stpage, float scale
     return 0;
 }
 
+/*
+ * 单词级提取：与 PyMuPDF get_text("words") 对齐。
+ *
+ * 遍历 stext_page 的 block→line→char 链表（仅处理文本块），
+ * 在每行内按字符 c == ' ' 分词。每词的 bbox 由 char.quad 的并集计算。
+ *
+ * 输出格式（每条记录连续写入）：
+ *   [x0,y0,x1,y1: 4 * float]            16B
+ *   [block_no,line_no,word_no: 3 * int] 12B
+ *   [str_len: int]                       4B
+ *   [utf8 bytes]                         str_len bytes（无 NUL）
+ */
+int mupdf_safe_stext_to_words(fz_context *ctx, fz_stext_page *stpage,
+                              char **out, size_t *out_len, int *total_n) {
+    if (!ctx || !stpage || !out || !out_len || !total_n) return -1;
+    *out = NULL;
+    *out_len = 0;
+    *total_n = 0;
+
+    /* 第一遍：计算总长度和单词数 */
+    size_t total = 0;
+    int n_words = 0;
+    int block_no = 0;
+    for (fz_stext_block *blk = stpage->first_block; blk; blk = blk->next) {
+        if (blk->type != FZ_STEXT_BLOCK_TEXT) {
+            block_no++;
+            continue;
+        }
+        int line_no = 0;
+        for (fz_stext_line *line = blk->u.t.first_line; line; line = line->next) {
+            int word_no = 0;
+            int in_word = 0;
+            size_t word_bytes = 0;
+            for (fz_stext_char *ch = line->first_char; ch; ch = ch->next) {
+                if (ch->c == ' ' || ch->c == '\t') {
+                    if (in_word) {
+                        total += 32 + word_bytes;
+                        n_words++;
+                        word_no++;
+                        in_word = 0;
+                        word_bytes = 0;
+                    }
+                } else {
+                    /* utf8 编码长度 */
+                    int len = 0;
+                    fz_try(ctx) {
+                        char tmp[8];
+                        len = fz_runetochar(tmp, ch->c);
+                    }
+                    fz_catch(ctx) {
+                        len = 0;
+                    }
+                    word_bytes += len;
+                    in_word = 1;
+                }
+            }
+            if (in_word) {
+                total += 32 + word_bytes;
+                n_words++;
+                word_no++;
+            }
+            line_no++;
+        }
+        block_no++;
+    }
+
+    if (n_words == 0) {
+        return 0;
+    }
+
+    char *buf = (char *)malloc(total);
+    if (!buf) {
+        set_error("stext words: out of memory (%zu bytes)", total);
+        return -1;
+    }
+
+    /* 第二遍：写入数据 */
+    char *p = buf;
+    block_no = 0;
+    for (fz_stext_block *blk = stpage->first_block; blk; blk = blk->next) {
+        if (blk->type != FZ_STEXT_BLOCK_TEXT) {
+            block_no++;
+            continue;
+        }
+        int line_no = 0;
+        for (fz_stext_line *line = blk->u.t.first_line; line; line = line->next) {
+            int word_no = 0;
+            int in_word = 0;
+            float wx0 = 0, wy0 = 0, wx1 = 0, wy1 = 0;
+            size_t word_bytes = 0;
+            char *word_start = NULL; /* 指向当前 word 在 buf 中的 utf8 起点 */
+
+            /* 预留 32 字节头，再写 utf8 */
+            char *header = p;
+            p += 32;
+            word_start = p;
+
+            for (fz_stext_char *ch = line->first_char; ch; ch = ch->next) {
+                if (ch->c == ' ' || ch->c == '\t') {
+                    if (in_word) {
+                        /* 收尾当前 word */
+                        memcpy(header,     &wx0, 4);
+                        memcpy(header + 4, &wy0, 4);
+                        memcpy(header + 8, &wx1, 4);
+                        memcpy(header + 12, &wy1, 4);
+                        int hdr_block = block_no, hdr_line = line_no, hdr_word = word_no;
+                        int hdr_len = (int)word_bytes;
+                        memcpy(header + 16, &hdr_block, 4);
+                        memcpy(header + 20, &hdr_line, 4);
+                        memcpy(header + 24, &hdr_word, 4);
+                        memcpy(header + 28, &hdr_len, 4);
+                        /* 准备下一 word 的 header */
+                        header = p;
+                        p += 32;
+                        word_start = p;
+                        word_no++;
+                        in_word = 0;
+                        word_bytes = 0;
+                        wx0 = wy0 = wx1 = wy1 = 0;
+                    }
+                } else {
+                    /* 累积 bbox 并写 utf8 */
+                    fz_quad q = ch->quad;
+                    float cx0 = q.ul.x, cy0 = q.ul.y;
+                    float cx1 = q.lr.x, cy1 = q.lr.y;
+                    /* 取四点包围盒 */
+                    if (q.ll.x < cx0) cx0 = q.ll.x;
+                    if (q.ur.x > cx1) cx1 = q.ur.x;
+                    if (q.ur.y < cy0) cy0 = q.ur.y;
+                    if (q.ll.y > cy1) cy1 = q.ll.y;
+                    if (!in_word) {
+                        wx0 = cx0; wy0 = cy0; wx1 = cx1; wy1 = cy1;
+                    } else {
+                        if (cx0 < wx0) wx0 = cx0;
+                        if (cy0 < wy0) wy0 = cy0;
+                        if (cx1 > wx1) wx1 = cx1;
+                        if (cy1 > wy1) wy1 = cy1;
+                    }
+                    char tmp[8];
+                    int len = fz_runetochar(tmp, ch->c);
+                    memcpy(p, tmp, len);
+                    p += len;
+                    word_bytes += len;
+                    in_word = 1;
+                }
+            }
+            if (in_word) {
+                memcpy(header,     &wx0, 4);
+                memcpy(header + 4, &wy0, 4);
+                memcpy(header + 8, &wx1, 4);
+                memcpy(header + 12, &wy1, 4);
+                int hdr_block = block_no, hdr_line = line_no, hdr_word = word_no;
+                int hdr_len = (int)word_bytes;
+                memcpy(header + 16, &hdr_block, 4);
+                memcpy(header + 20, &hdr_line, 4);
+                memcpy(header + 24, &hdr_word, 4);
+                memcpy(header + 28, &hdr_len, 4);
+                /* 末尾 word 不再预留 header */
+            } else {
+                /* 没用到预留的 header，回滚 */
+                p -= 32;
+            }
+            line_no++;
+        }
+        block_no++;
+    }
+
+    *out = buf;
+    *out_len = total;
+    *total_n = n_words;
+    return 0;
+}
+
 /* ====================================================================
  * 链接（links）
  * ==================================================================== */

@@ -194,6 +194,14 @@ extern "C" {
         out_len: *mut usize,
     ) -> std::os::raw::c_int;
 
+    pub fn mupdf_safe_stext_to_words(
+        ctx: *mut fz_context,
+        stpage: *mut fz_stext_page,
+        out: *mut *mut std::os::raw::c_char,
+        out_len: *mut usize,
+        total_n: *mut std::os::raw::c_int,
+    ) -> std::os::raw::c_int;
+
     /* ---- 像素图（pixmap） ---- */
 
     pub fn mupdf_safe_render_pixmap(
