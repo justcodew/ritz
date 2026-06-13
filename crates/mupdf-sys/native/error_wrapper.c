@@ -220,6 +220,194 @@ fz_rect mupdf_safe_bound_page(fz_context *ctx, fz_page *page) {
 }
 
 /* ====================================================================
+ * 结构化文本（stext）
+ * ==================================================================== */
+
+int mupdf_safe_new_stext_page(fz_context *ctx, fz_page *page, fz_stext_page **out) {
+    if (!ctx || !page || !out) return -1;
+    *out = NULL;
+    mupdf_clear_error();
+    fz_try(ctx) {
+        *out = fz_new_stext_page_from_page(ctx, page, NULL);
+    }
+    fz_catch(ctx) {
+        set_error("stext page: %s", fz_caught_message(ctx));
+        return -1;
+    }
+    return 0;
+}
+
+void mupdf_safe_drop_stext_page(fz_context *ctx, fz_stext_page *stpage) {
+    if (ctx && stpage) fz_drop_stext_page(ctx, stpage);
+}
+
+/*
+ * 通用 helper：将 stext 页通过 fz_print_stext_page_as_* 输出到 buffer，
+ * 然后提取为 malloc 的内存块返回给 Rust。
+ *
+ * MuPDF 1.27 的签名不统一：
+ *   text:                          (ctx, out, page)
+ *   html/xhtml/xml:                (ctx, out, page, int id)
+ *   json:                          (ctx, out, page, float scale)
+ * 统一用一个带 int 标签的函数指针，text 版用 wrapper 忽略 id。
+ */
+typedef void (*stext_print_fn)(fz_context *, fz_output *, fz_stext_page *, int);
+
+static void text_print_wrapper(fz_context *ctx, fz_output *out,
+                               fz_stext_page *page, int id) {
+    (void)id;
+    fz_print_stext_page_as_text(ctx, out, page);
+}
+
+static int stext_to_buffer(fz_context *ctx, fz_stext_page *stpage,
+                           stext_print_fn print_fn,
+                           char **out, size_t *out_len) {
+    if (!ctx || !stpage || !out || !out_len) return -1;
+    *out = NULL;
+    *out_len = 0;
+
+    fz_buffer *buf = NULL;
+    fz_output *stm = NULL;
+    unsigned char *data = NULL;
+    size_t len = 0;
+
+    mupdf_clear_error();
+    fz_try(ctx) {
+        buf = fz_new_buffer(ctx, 256);
+        stm = fz_new_output_with_buffer(ctx, buf);
+        print_fn(ctx, stm, stpage, 0);
+        fz_close_output(ctx, stm);
+        len = fz_buffer_extract(ctx, buf, &data); /* data 是 malloc 的 */
+    }
+    fz_always(ctx) {
+        fz_drop_output(ctx, stm);
+        fz_drop_buffer(ctx, buf);
+    }
+    fz_catch(ctx) {
+        set_error("stext output: %s", fz_caught_message(ctx));
+        if (data) free(data);
+        return -1;
+    }
+
+    *out = (char *)data;
+    *out_len = len;
+    return 0;
+}
+
+int mupdf_safe_stext_to_text(fz_context *ctx, fz_stext_page *stpage,
+                             char **out, size_t *out_len) {
+    return stext_to_buffer(ctx, stpage, text_print_wrapper, out, out_len);
+}
+
+int mupdf_safe_stext_to_html(fz_context *ctx, fz_stext_page *stpage,
+                             char **out, size_t *out_len) {
+    return stext_to_buffer(ctx, stpage, fz_print_stext_page_as_html, out, out_len);
+}
+
+int mupdf_safe_stext_to_xml(fz_context *ctx, fz_stext_page *stpage,
+                            char **out, size_t *out_len) {
+    return stext_to_buffer(ctx, stpage, fz_print_stext_page_as_xml, out, out_len);
+}
+
+/* ====================================================================
+ * 像素图（pixmap）
+ * ==================================================================== */
+
+int mupdf_safe_render_pixmap(fz_context *ctx, fz_page *page,
+                             float zoom, int alpha, fz_pixmap **out) {
+    if (!ctx || !page || !out) return -1;
+    *out = NULL;
+
+    fz_pixmap *pix = NULL;
+    fz_device *dev = NULL;
+
+    mupdf_clear_error();
+    fz_try(ctx) {
+        fz_rect bounds = fz_bound_page(ctx, page);
+        fz_matrix ctm = fz_scale(zoom, zoom);
+        fz_irect ibox = fz_irect_from_rect(fz_transform_rect(bounds, ctm));
+        int w = ibox.x1 - ibox.x0;
+        int h = ibox.y1 - ibox.y0;
+
+        pix = fz_new_pixmap(ctx, fz_device_rgb(ctx), w, h, NULL, alpha);
+        fz_clear_pixmap_with_value(ctx, pix, 0xFF); /* 白色背景 */
+
+        dev = fz_new_draw_device(ctx, ctm, pix);
+        fz_run_page(ctx, page, dev, ctm, NULL);
+        fz_close_device(ctx, dev);
+    }
+    fz_always(ctx) {
+        fz_drop_device(ctx, dev);
+    }
+    fz_catch(ctx) {
+        if (pix) { fz_drop_pixmap(ctx, pix); pix = NULL; }
+        set_error("render pixmap: %s", fz_caught_message(ctx));
+        return -1;
+    }
+
+    *out = pix;
+    return 0;
+}
+
+void mupdf_safe_drop_pixmap(fz_context *ctx, fz_pixmap *pix) {
+    if (ctx && pix) fz_drop_pixmap(ctx, pix);
+}
+
+int mupdf_safe_pixmap_width(fz_context *ctx, fz_pixmap *pix) {
+    if (!ctx || !pix) return 0;
+    return fz_pixmap_width(ctx, pix);
+}
+
+int mupdf_safe_pixmap_height(fz_context *ctx, fz_pixmap *pix) {
+    if (!ctx || !pix) return 0;
+    return fz_pixmap_height(ctx, pix);
+}
+
+int mupdf_safe_pixmap_stride(fz_context *ctx, fz_pixmap *pix) {
+    if (!ctx || !pix) return 0;
+    return fz_pixmap_stride(ctx, pix);
+}
+
+int mupdf_safe_pixmap_components(fz_context *ctx, fz_pixmap *pix) {
+    if (!ctx || !pix) return 0;
+    return fz_pixmap_components(ctx, pix);
+}
+
+unsigned char *mupdf_safe_pixmap_samples(fz_context *ctx, fz_pixmap *pix) {
+    if (!ctx || !pix) return NULL;
+    return fz_pixmap_samples(ctx, pix);
+}
+
+int mupdf_safe_pixmap_to_png(fz_context *ctx, fz_pixmap *pix,
+                             unsigned char **out, size_t *out_len) {
+    if (!ctx || !pix || !out || !out_len) return -1;
+    *out = NULL;
+    *out_len = 0;
+
+    fz_buffer *buf = NULL;
+    unsigned char *data = NULL;
+    size_t len = 0;
+
+    mupdf_clear_error();
+    fz_try(ctx) {
+        buf = fz_new_buffer_from_pixmap_as_png(ctx, pix, fz_default_color_params);
+        len = fz_buffer_extract(ctx, buf, &data);
+    }
+    fz_always(ctx) {
+        fz_drop_buffer(ctx, buf);
+    }
+    fz_catch(ctx) {
+        set_error("pixmap to png: %s", fz_caught_message(ctx));
+        if (data) free(data);
+        return -1;
+    }
+
+    *out = data;
+    *out_len = len;
+    return 0;
+}
+
+/* ====================================================================
  * 内存释放
  * ==================================================================== */
 

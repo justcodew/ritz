@@ -49,6 +49,32 @@ fz_page *mupdf_safe_load_page(fz_context *ctx, fz_document *doc, int number);
 void mupdf_safe_drop_page(fz_context *ctx, fz_page *page);
 fz_rect mupdf_safe_bound_page(fz_context *ctx, fz_page *page);
 
+/* ---- 结构化文本（stext） ---- */
+int mupdf_safe_new_stext_page(fz_context *ctx, fz_page *page, fz_stext_page **out);
+void mupdf_safe_drop_stext_page(fz_context *ctx, fz_stext_page *stpage);
+/* 将 stext 页转为文本/html/xml，输出 malloc 的 buffer，调用方须 mupdf_free */
+int mupdf_safe_stext_to_text(fz_context *ctx, fz_stext_page *stpage,
+                             char **out, size_t *out_len);
+int mupdf_safe_stext_to_html(fz_context *ctx, fz_stext_page *stpage,
+                             char **out, size_t *out_len);
+int mupdf_safe_stext_to_xml(fz_context *ctx, fz_stext_page *stpage,
+                            char **out, size_t *out_len);
+
+/* ---- 像素图（pixmap）渲染 ---- */
+/* zoom=1.0 为原始 DPI(72)，alpha=1 带透明通道 */
+int mupdf_safe_render_pixmap(fz_context *ctx, fz_page *page,
+                             float zoom, int alpha, fz_pixmap **out);
+void mupdf_safe_drop_pixmap(fz_context *ctx, fz_pixmap *pix);
+int mupdf_safe_pixmap_width(fz_context *ctx, fz_pixmap *pix);
+int mupdf_safe_pixmap_height(fz_context *ctx, fz_pixmap *pix);
+int mupdf_safe_pixmap_stride(fz_context *ctx, fz_pixmap *pix);
+int mupdf_safe_pixmap_components(fz_context *ctx, fz_pixmap *pix);
+/* 返回借用指针，pixmap 存活期间有效 */
+unsigned char *mupdf_safe_pixmap_samples(fz_context *ctx, fz_pixmap *pix);
+/* 编码为 PNG，输出 malloc 的 buffer，调用方须 mupdf_free */
+int mupdf_safe_pixmap_to_png(fz_context *ctx, fz_pixmap *pix,
+                             unsigned char **out, size_t *out_len);
+
 /* ---- 内存释放 ---- */
 void mupdf_free(void *ptr);
 

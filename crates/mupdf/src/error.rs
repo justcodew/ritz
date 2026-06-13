@@ -7,6 +7,9 @@ pub enum MuPdfError {
     OpenDocument(String),
     LoadPage(String),
     Metadata(String),
+    STextPage(String),
+    Render(String),
+    Pixmap(String),
     Other(String),
 }
 
@@ -31,6 +34,9 @@ impl fmt::Display for MuPdfError {
             MuPdfError::OpenDocument(m) => write!(f, "open document: {}", m),
             MuPdfError::LoadPage(m) => write!(f, "load page: {}", m),
             MuPdfError::Metadata(m) => write!(f, "metadata: {}", m),
+            MuPdfError::STextPage(m) => write!(f, "stext page: {}", m),
+            MuPdfError::Render(m) => write!(f, "render: {}", m),
+            MuPdfError::Pixmap(m) => write!(f, "pixmap: {}", m),
             MuPdfError::Other(m) => write!(f, "{}", m),
         }
     }

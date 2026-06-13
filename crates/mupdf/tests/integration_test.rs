@@ -91,3 +91,60 @@ fn open_nonexistent_file_errors() {
         println!("错误消息: {}", e);
     }
 }
+
+#[test]
+fn extract_text() {
+    let path = sample_pdf();
+    if !path.exists() {
+        eprintln!("跳过：测试 PDF 不存在");
+        return;
+    }
+
+    let ctx = mupdf::Context::new().expect("创建上下文失败");
+    let doc = mupdf::Document::open(&ctx, path.to_str().unwrap()).expect("打开文档失败");
+    let page = doc.page(0).expect("加载第 0 页失败");
+
+    let text = page.text().expect("提取文本失败");
+    println!("文本长度: {}", text.len());
+    println!("文本前 200 字符: {}", text.chars().take(200).collect::<String>());
+    assert!(!text.is_empty(), "文本不应为空");
+
+    // 测试 html / xml 模式
+    let st = page.new_stext_page().expect("构造 stext 失败");
+    let html = st.to_html().expect("转 html 失败");
+    let xml = st.to_xml().expect("转 xml 失败");
+    println!("html 长度: {}, xml 长度: {}", html.len(), xml.len());
+    assert!(html.contains("<"), "html 应包含 <");
+    assert!(xml.contains("<"), "xml 应包含 <");
+}
+
+#[test]
+fn render_pixmap_and_png() {
+    let path = sample_pdf();
+    if !path.exists() {
+        eprintln!("跳过：测试 PDF 不存在");
+        return;
+    }
+
+    let ctx = mupdf::Context::new().expect("创建上下文失败");
+    let doc = mupdf::Document::open(&ctx, path.to_str().unwrap()).expect("打开文档失败");
+    let page = doc.page(0).expect("加载第 0 页失败");
+
+    let pix = page.new_pixmap(1.0, false).expect("渲染失败");
+    println!(
+        "像素图: {}x{} stride={} comps={}",
+        pix.width(),
+        pix.height(),
+        pix.stride(),
+        pix.components()
+    );
+    assert!(pix.width() > 0 && pix.height() > 0);
+
+    let samples = pix.samples();
+    println!("samples 字节数: {}", samples.len());
+    assert!(!samples.is_empty());
+
+    let png = page.png(1.0, false).expect("转 PNG 失败");
+    println!("PNG 字节数: {}", png.len());
+    assert_eq!(&png[0..8], &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A], "PNG 头部");
+}

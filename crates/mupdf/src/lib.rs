@@ -12,9 +12,13 @@ mod document;
 mod error;
 mod geometry;
 mod page;
+mod pixmap;
+mod stext;
 
 pub use context::Context;
 pub use document::Document;
 pub use error::{MuPdfError, Result};
 pub use geometry::{Matrix, Point, Rect};
 pub use page::Page;
+pub use pixmap::Pixmap;
+pub use stext::STextPage;

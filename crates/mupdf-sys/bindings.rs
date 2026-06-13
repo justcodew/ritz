@@ -76,6 +76,16 @@ pub struct fz_stream {
     _private: [u8; 0],
 }
 
+#[repr(C)]
+pub struct fz_stext_page {
+    _private: [u8; 0],
+}
+
+#[repr(C)]
+pub struct fz_pixmap {
+    _private: [u8; 0],
+}
+
 /* ---- 常量 ---- */
 
 pub const FZ_STORE_DEFAULT: usize = 256 << 20; // 256 MB
@@ -138,6 +148,74 @@ extern "C" {
     pub fn mupdf_safe_drop_page(ctx: *mut fz_context, page: *mut fz_page);
 
     pub fn mupdf_safe_bound_page(ctx: *mut fz_context, page: *mut fz_page) -> fz_rect;
+
+    /* ---- 结构化文本（stext） ---- */
+
+    pub fn mupdf_safe_new_stext_page(
+        ctx: *mut fz_context,
+        page: *mut fz_page,
+        out: *mut *mut fz_stext_page,
+    ) -> std::os::raw::c_int;
+
+    pub fn mupdf_safe_drop_stext_page(ctx: *mut fz_context, stpage: *mut fz_stext_page);
+
+    pub fn mupdf_safe_stext_to_text(
+        ctx: *mut fz_context,
+        stpage: *mut fz_stext_page,
+        out: *mut *mut std::os::raw::c_char,
+        out_len: *mut usize,
+    ) -> std::os::raw::c_int;
+
+    pub fn mupdf_safe_stext_to_html(
+        ctx: *mut fz_context,
+        stpage: *mut fz_stext_page,
+        out: *mut *mut std::os::raw::c_char,
+        out_len: *mut usize,
+    ) -> std::os::raw::c_int;
+
+    pub fn mupdf_safe_stext_to_xml(
+        ctx: *mut fz_context,
+        stpage: *mut fz_stext_page,
+        out: *mut *mut std::os::raw::c_char,
+        out_len: *mut usize,
+    ) -> std::os::raw::c_int;
+
+    /* ---- 像素图（pixmap） ---- */
+
+    pub fn mupdf_safe_render_pixmap(
+        ctx: *mut fz_context,
+        page: *mut fz_page,
+        zoom: f32,
+        alpha: std::os::raw::c_int,
+        out: *mut *mut fz_pixmap,
+    ) -> std::os::raw::c_int;
+
+    pub fn mupdf_safe_drop_pixmap(ctx: *mut fz_context, pix: *mut fz_pixmap);
+
+    pub fn mupdf_safe_pixmap_width(ctx: *mut fz_context, pix: *mut fz_pixmap) -> std::os::raw::c_int;
+
+    pub fn mupdf_safe_pixmap_height(ctx: *mut fz_context, pix: *mut fz_pixmap) -> std::os::raw::c_int;
+
+    pub fn mupdf_safe_pixmap_stride(ctx: *mut fz_context, pix: *mut fz_pixmap) -> std::os::raw::c_int;
+
+    pub fn mupdf_safe_pixmap_components(
+        ctx: *mut fz_context,
+        pix: *mut fz_pixmap,
+    ) -> std::os::raw::c_int;
+
+    pub fn mupdf_safe_pixmap_samples(
+        ctx: *mut fz_context,
+        pix: *mut fz_pixmap,
+    ) -> *mut std::os::raw::c_uchar;
+
+    pub fn mupdf_safe_pixmap_to_png(
+        ctx: *mut fz_context,
+        pix: *mut fz_pixmap,
+        out: *mut *mut std::os::raw::c_uchar,
+        out_len: *mut usize,
+    ) -> std::os::raw::c_int;
+
+    /* ---- 内存释放 ---- */
 
     pub fn mupdf_free(ptr: *mut std::ffi::c_void);
 }
