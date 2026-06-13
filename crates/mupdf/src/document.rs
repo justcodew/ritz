@@ -118,10 +118,6 @@ impl<'ctx> Document<'ctx> {
         let count = self.page_count()?;
         (0..count).map(|i| self.page(i)).collect()
     }
-
-    pub(crate) fn ctx_ptr(&self) -> *mut mupdf_sys::fz_context {
-        self.ctx
-    }
 }
 
 impl Drop for Document<'_> {

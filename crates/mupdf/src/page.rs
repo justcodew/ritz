@@ -36,11 +36,6 @@ impl<'doc, 'ctx> Page<'doc, 'ctx> {
     pub fn height(&self) -> f32 {
         self.rect().height()
     }
-
-    /// 页面旋转角度（0/90/180/270）。
-    pub fn rotation(&self) -> i32 {
-        unsafe { mupdf_sys::mupdf_safe_page_rotation(self.ctx, self.raw) as i32 }
-    }
 }
 
 impl Drop for Page<'_, '_> {

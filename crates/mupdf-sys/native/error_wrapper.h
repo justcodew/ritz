@@ -48,7 +48,6 @@ int mupdf_safe_lookup_metadata(fz_context *ctx, fz_document *doc,
 fz_page *mupdf_safe_load_page(fz_context *ctx, fz_document *doc, int number);
 void mupdf_safe_drop_page(fz_context *ctx, fz_page *page);
 fz_rect mupdf_safe_bound_page(fz_context *ctx, fz_page *page);
-int mupdf_safe_page_rotation(fz_context *ctx, fz_page *page);
 
 /* ---- 内存释放 ---- */
 void mupdf_free(void *ptr);

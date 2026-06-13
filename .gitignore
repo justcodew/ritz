@@ -1,5 +1,4 @@
 /target
-vendor/mupdf
 **/*.rs.bk
 *.pdb
 __pycache__/

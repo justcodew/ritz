@@ -219,18 +219,6 @@ fz_rect mupdf_safe_bound_page(fz_context *ctx, fz_page *page) {
     return r;
 }
 
-int mupdf_safe_page_rotation(fz_context *ctx, fz_page *page) {
-    int rot = 0;
-    if (!ctx || !page) return 0;
-    fz_try(ctx) {
-        rot = fz_page_rotation(ctx, page);
-    }
-    fz_catch(ctx) {
-        rot = 0;
-    }
-    return rot;
-}
-
 /* ====================================================================
  * 内存释放
  * ==================================================================== */

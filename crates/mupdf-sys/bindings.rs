@@ -139,7 +139,5 @@ extern "C" {
 
     pub fn mupdf_safe_bound_page(ctx: *mut fz_context, page: *mut fz_page) -> fz_rect;
 
-    pub fn mupdf_safe_page_rotation(ctx: *mut fz_context, page: *mut fz_page) -> std::os::raw::c_int;
-
     pub fn mupdf_free(ptr: *mut std::ffi::c_void);
 }
