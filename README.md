@@ -6,18 +6,28 @@
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Build](https://img.shields.io/badge/build-cargo%20build-green.svg)](https://github.com/justcodew/ritz)
+[![Changelog](https://img.shields.io/badge/changelog-CHANGELOG.md-blue.svg)](CHANGELOG.md)
 
 ## 为什么用 ritz
 
-**性能**：在 32 MB / 43 页的真实 PDF 上对比 PyMuPDF（数据见 [benchmarks/benchmark_report.md](benchmarks/benchmark_report.md)）：
+**性能**：在 32 MB / 43 页的真实 PDF 上对比 PyMuPDF（完整数据见 [benchmarks/benchmark_report.md](benchmarks/benchmark_report.md)）：
 
-| 场景 | 加速比 |
-|------|-------|
-| 链接读取 | **27x** |
-| 文档打开 | **6.6x** |
-| 页面加载 | **2.0x** |
-| 文本提取 | **2.1x** |
-| 多文档并行 | **2.06x**（vs 串行） |
+| 场景 | 加速比 | 说明 |
+|------|-------|------|
+| 链接读取 | **27x** | C 层扁平化链表，一次 FFI |
+| JPEG 图片提取 | **6.2x** | 返回原始 JPEG 字节，跳过 decode+re-encode |
+| 文档打开 | **5.6x** | PyO3 零成本抽象 |
+| 页面加载 | **1.9x** | 同上 |
+| 批量提取 | **2.4x** | vs PyMuPDF per-page |
+| 多文档并行 | **2.1x** | rayon vs multiprocessing |
+| 文本提取 | **2.1x** | stext 构造是双方共享地板 |
+| FlateDecode 图片 | **1.1x** | PNG 编码是双方共享瓶颈 |
+
+> 加速比上界由"瓶颈在语言调度还是 MuPDF 内部计算"决定。纯调度场景（链接 27x）可达数量级；计算密集场景（文本/渲染/Flate 图片）双方共享 MuPDF C 引擎，上限 ~2x。详见报告中的"plan_v1 KPI 兑现账本"。
+
+**一级图片提取**：`get_images(include_data=True)` 一次调用返回 bbox + 原始格式字节（JPEG/PNG/JPX），消除 PyMuPDF 的 `get_images()` + `extract_image(xref)` 两步调用。
+
+**安全**：1000 页 PDF 峰值 RSS 72.9 MB（plan 目标 ≤200 MB）；1000 次循环泄漏 < 5 KB/iter。
 
 **兼容**：API 与 PyMuPDF 核心一致，迁移只需 `import fitz` → `import ritz`。
 
@@ -83,11 +93,11 @@ rj = page.get_text("rawjson")          # JSON of rawdict
 # 页面属性
 print(page.rect, page.rotation, page.mediabox)
 
-# 图片提取
+# 图片提取（一级 API：bbox + 原始格式字节一次调用）
 for img in page.get_images():
     print(img["bbox"], img["width"], img["height"])
 for img in page.get_images(include_data=True):
-    open("out.png", "wb").write(img["image"])
+    open(f"out.{img['ext']}", "wb").write(img["image"])  # ext: "jpeg"/"png"/"jpx"
 
 # 链接
 for link in page.get_links():
@@ -125,7 +135,8 @@ results = ritz.process_documents(paths)
 | `ritz.open(path)` | `fitz.open(path)` | |
 | `len(doc)` / `doc.page_count` | `len(doc)` / `doc.page_count` | |
 | `doc[i]` / `doc.load_page(i)` | `doc[i]` / `doc.load_page(i)` | |
-| `doc.metadata(key)` | `doc.metadata.get(key)` | |
+| `doc.metadata` | `doc.metadata` | @property 返回 dict |
+| `doc.lookup_metadata(key)` | — | 直接查 MuPDF key（如 `"info:Title"`） |
 | `doc.is_encrypted` / `doc.needs_password()` | 同 | |
 | `doc.authenticate(pw)` | 同 | |
 | `doc.get_text_batch()` | — | **ritz 独有** |
@@ -138,7 +149,7 @@ results = ritz.process_documents(paths)
 | `page.mediabox` / `page.cropbox` | 同 | |
 | `page.rotation` | `page.rotation` | |
 | `page.get_text(mode)` | 同 | mode: text/html/xhtml/xml/json/rawjson/words/blocks/dict/rawdict |
-| `page.get_images(include_data=False)` | `page.get_images()` / `page.get_image_info()` | ritz 合并两者 |
+| `page.get_images(include_data=False)` | `page.get_images()` / `page.get_image_info()` | ritz 合并两者；`include_data=True` 时含 `ext` + `image`（原始格式字节，非重编码 PNG） |
 | `page.get_links()` | 同 | |
 | `page.get_pixmap(matrix/dpi/alpha)` | 同 | |
 | `page.png(zoom, alpha)` | — | **ritz 独有**：直接返回 PNG bytes |
@@ -156,7 +167,7 @@ results = ritz.process_documents(paths)
 
 | 函数 | 备注 |
 |------|------|
-| `ritz.process_documents(paths, mode="text")` | **ritz 独有**：rayon 并行 |
+| `ritz.process_documents(paths, mode="text")` | **ritz 独有**：rayon 并行；mode 可选 text/html/xhtml/xml/json |
 
 ## 与 PyMuPDF 的差异
 
@@ -189,6 +200,8 @@ results = ritz.process_documents(paths)
 2. **C 层扁平化**：stext/image/links 的链表/树遍历都在 C 层完成，输出连续二进制 buffer 给 Rust，避免 N 次 FFI 往返和 Python 对象构造开销（链接读取 27x 的根因）。
 3. **`Py<PyDocument>` 引用计数**：Page 和 Pixmap 持有 `Py<PyDocument>` 句柄防止 ctx 在 GC 时被先释放。
 4. **rayon 并行**：每文档独立 fz_context（无锁函数），`py.detach` 释放 GIL 让 worker 真正并行。
+5. **patches/ 工作流**（plan §5.5）：`build.rs` 在编译前自动应用 `patches/*.patch` 到 MuPDF 子模块，幂等跳过已应用的。详见 [patches/README.md](patches/README.md)。
+6. **`PdfValue` 数据模型**（plan §5.2 Rennie）：10 种 PDF 对象类型在 Rust 用 `enum`，已暴露给 Python：`from ritz import PdfValue`，支持 `null/bool/int/float/name/str/array/dict/stream/ref` 全套构造和 `to_python()` 转换。
 
 ## 基准测试
 
@@ -223,7 +236,12 @@ pytest python/tests/
 - [x] **阶段 2**：文本提取 + PyO3 最小可用包
 - [x] **阶段 3**：完整 API（10 种 get_text 模式 + 图片 + 链接 + 元数据）
 - [x] **阶段 4**：批量扩展 + rayon 并行 + criterion 基准 + 测试套件
-- [ ] **阶段 5**（计划中）：文本搜索、大纲、PDF 编辑、JPEG、注释
+- [x] **plan_v1 KPI 兑现验证**：图片提取原始字节优化（JPEG 6.2x）、安全验证（1000 页 ≤200MB、泄漏 <5KB/iter）、诚实性能账本
+- [x] **plan_v1 缺口补齐**：`get_images` 加 xref（与 PyMuPDF 一致）、`metadata` 改 @property dict、`PdfValue` 暴露给 Python、`process_documents` 多模式（text/html/xhtml/xml/json）、`patches/` 工作流（build.rs 自动应用）、wheel ≤35MB（实测 29MB）
+- [x] **Tier 1+2 实现层优化**：GIL 释放（多文档并行渲染 15.4x）、memoize（metadata/rect/raw_doc）、PNG tobytes 去重复拷贝（1.37x）、words/blocks 单趟 growbuf、PyString fast path。详见 [CHANGELOG.md](CHANGELOG.md) 和 [docx/10-tier1-tier2-results.md](docx/10-tier1-tier2-results.md)
+- [ ] **阶段 5**（计划中）：文本搜索、大纲、PDF 编辑、注释
+
+> 每个版本的完整改动记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 许可证
 
