@@ -39,6 +39,10 @@
 - [06-parallel-and-batch.md](06-parallel-and-batch.md) — 要改并行/批量时读
 - [08-comparison-with-pdf-oxide.md](08-comparison-with-pdf-oxide.md) — 要回答"为什么不用 pdf_oxide"时读
 - [09-acceleration-opportunities.md](09-acceleration-opportunities.md) — 想继续优化时读
+- [11-phase5a-read-path.md](11-phase5a-read-path.md) — search_for / get_toc 实现
+- [12-phase5b-annotations.md](12-phase5b-annotations.md) — 注释读写实现（含 refcount 陷阱）
+- [13-phase5c-outline-writing.md](13-phase5c-outline-writing.md) — set_toc / save 实现（含 iterator 设计缺陷分析）
+- [14-phase5d-resolve-names.md](14-phase5d-resolve-names.md) — resolve_names 实现
 
 ## 2. 把项目跑起来（15 分钟）
 
