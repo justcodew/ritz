@@ -4,7 +4,9 @@ use crate::document::PyDocument;
 use crate::pixmap::PyPixmap;
 use mupdf_sys::{
     self, fz_context, fz_page, mupdf_safe_bound_page, mupdf_safe_bound_page_box,
-    mupdf_safe_drop_page, mupdf_safe_drop_stext_page, mupdf_safe_get_images,
+    mupdf_safe_create_annot, mupdf_safe_delete_annot, mupdf_safe_drop_page,
+    mupdf_safe_drop_stext_page, mupdf_safe_get_annotations, mupdf_safe_get_images,
+    mupdf_safe_set_annot_rect,
     mupdf_safe_load_links, mupdf_safe_new_stext_page, mupdf_safe_page_rotation,
     mupdf_safe_render_pixmap, mupdf_safe_search_stext_page, mupdf_safe_stext_to_blocks,
     mupdf_safe_stext_to_dict, mupdf_safe_stext_to_html, mupdf_safe_stext_to_json,
@@ -270,6 +272,209 @@ impl PyPage {
         unsafe { mupdf_safe_drop_stext_page(self.ctx, stpage) };
         unsafe { mupdf_sys::mupdf_free(quads_ptr as *mut _) };
         result
+    }
+
+    // ---- 注释（Phase 5b） ----
+
+    /// get_annotations() -> list[dict]
+    ///
+    /// 返回页面上所有注释的列表。每条为 dict，包含：
+    /// - type: str ("Highlight"/"Underline"/"StrikeOut"/"Text"/...)
+    /// - rect: (x0, y0, x1, y1)
+    /// - contents: str
+    /// - author: str
+    /// - color: (r, g, b) 或 (r, g, b, a) 或 ()
+    /// - quads: list of 8-tuples (仅 highlight/underline/strikeout)
+    /// - flags: int
+    fn get_annotations(&self, py: Python<'_>) -> PyResult<Vec<Py<PyAny>>> {
+        let mut ptr: *mut c_char = ptr::null_mut();
+        let mut total_len: usize = 0;
+        let mut n: c_int = 0;
+        let rc = unsafe {
+            mupdf_safe_get_annotations(
+                self.ctx, self.raw_doc, self.raw,
+                &mut ptr, &mut total_len, &mut n,
+            )
+        };
+        if rc != 0 {
+            return Err(PyDocument::last_error_pub());
+        }
+        if n == 0 || ptr.is_null() || total_len == 0 {
+            return Ok(Vec::new());
+        }
+
+        let result = (|| -> PyResult<Vec<Py<PyAny>>> {
+            let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, total_len) };
+            let mut out = Vec::with_capacity(n as usize);
+            let mut off = 0usize;
+
+            let type_names = [
+                "Text", "Link", "FreeText", "Line", "Square", "Circle",
+                "Polygon", "PolyLine", "Highlight", "Underline", "Squiggly",
+                "StrikeOut", "Redact", "Stamp", "Caret", "Ink", "Popup",
+                "FileAttachment", "Sound", "Movie", "RichMedia", "Widget",
+                "Screen", "PrinterMark", "TrapNet", "Watermark", "3D", "Projection",
+            ];
+
+            for _ in 0..n as usize {
+                if off + 56 > bytes.len() {
+                    return Err(PyRuntimeError::new_err("get_annotations: buffer underrun"));
+                }
+
+                let type_val = i32::from_ne_bytes(bytes[off..off+4].try_into().unwrap()); off += 4;
+                let x0 = f32::from_ne_bytes(bytes[off..off+4].try_into().unwrap()); off += 4;
+                let y0 = f32::from_ne_bytes(bytes[off..off+4].try_into().unwrap()); off += 4;
+                let x1 = f32::from_ne_bytes(bytes[off..off+4].try_into().unwrap()); off += 4;
+                let y1 = f32::from_ne_bytes(bytes[off..off+4].try_into().unwrap()); off += 4;
+                let flags = i32::from_ne_bytes(bytes[off..off+4].try_into().unwrap()); off += 4;
+                let color_n = i32::from_ne_bytes(bytes[off..off+4].try_into().unwrap()); off += 4;
+                let c0 = f32::from_ne_bytes(bytes[off..off+4].try_into().unwrap()); off += 4;
+                let c1 = f32::from_ne_bytes(bytes[off..off+4].try_into().unwrap()); off += 4;
+                let c2 = f32::from_ne_bytes(bytes[off..off+4].try_into().unwrap()); off += 4;
+                let c3 = f32::from_ne_bytes(bytes[off..off+4].try_into().unwrap()); off += 4;
+                let contents_len = i32::from_ne_bytes(bytes[off..off+4].try_into().unwrap()) as usize; off += 4;
+                let author_len = i32::from_ne_bytes(bytes[off..off+4].try_into().unwrap()) as usize; off += 4;
+                let quad_count = i32::from_ne_bytes(bytes[off..off+4].try_into().unwrap()) as usize; off += 4;
+
+                if off + contents_len + author_len + quad_count * 32 > bytes.len() {
+                    return Err(PyRuntimeError::new_err("get_annotations: buffer underrun in variable data"));
+                }
+
+                let contents = std::str::from_utf8(&bytes[off..off+contents_len]).unwrap_or("");
+                off += contents_len;
+                let author = std::str::from_utf8(&bytes[off..off+author_len]).unwrap_or("");
+                off += author_len;
+
+                let mut quads_list: Vec<Py<PyAny>> = Vec::with_capacity(quad_count);
+                for _ in 0..quad_count {
+                    let ul_x = f32::from_ne_bytes(bytes[off..off+4].try_into().unwrap()); off += 4;
+                    let ul_y = f32::from_ne_bytes(bytes[off..off+4].try_into().unwrap()); off += 4;
+                    let ur_x = f32::from_ne_bytes(bytes[off..off+4].try_into().unwrap()); off += 4;
+                    let ur_y = f32::from_ne_bytes(bytes[off..off+4].try_into().unwrap()); off += 4;
+                    let ll_x = f32::from_ne_bytes(bytes[off..off+4].try_into().unwrap()); off += 4;
+                    let ll_y = f32::from_ne_bytes(bytes[off..off+4].try_into().unwrap()); off += 4;
+                    let lr_x = f32::from_ne_bytes(bytes[off..off+4].try_into().unwrap()); off += 4;
+                    let lr_y = f32::from_ne_bytes(bytes[off..off+4].try_into().unwrap()); off += 4;
+                    quads_list.push(
+                        (ul_x, ul_y, ur_x, ur_y, lr_x, lr_y, ll_x, ll_y)
+                            .into_pyobject(py)?.into_any().unbind()
+                    );
+                }
+
+                let type_name = if type_val >= 0 && (type_val as usize) < type_names.len() {
+                    type_names[type_val as usize]
+                } else {
+                    "Unknown"
+                };
+
+                let color_tuple: Py<PyAny> = match color_n {
+                    3 => (c0, c1, c2).into_pyobject(py)?.into_any().unbind(),
+                    4 => (c0, c1, c2, c3).into_pyobject(py)?.into_any().unbind(),
+                    _ => ().into_pyobject(py)?.into_any().unbind(),
+                };
+
+                let dict = PyDict::new(py);
+                dict.set_item("type", type_name)?;
+                dict.set_item("rect", (x0, y0, x1, y1))?;
+                dict.set_item("contents", contents)?;
+                dict.set_item("author", author)?;
+                dict.set_item("color", color_tuple)?;
+                dict.set_item("quads", quads_list)?;
+                dict.set_item("flags", flags)?;
+                out.push(dict.into_any().unbind());
+            }
+            Ok(out)
+        })();
+
+        unsafe { mupdf_sys::mupdf_free(ptr as *mut _) };
+        result
+    }
+
+    /// add_highlight_annot(quads, color=(1,1,0), contents="", author="") -> None
+    ///
+    /// 添加高亮注释。quads 为 quad 列表，每个 quad 为 8 元组。
+    #[pyo3(signature = (quads, color=(1.0, 1.0, 0.0), contents="", author=""))]
+    fn add_highlight_annot(
+        &self,
+        quads: Vec<(f32, f32, f32, f32, f32, f32, f32, f32)>,
+        color: (f32, f32, f32),
+        contents: &str,
+        author: &str,
+    ) -> PyResult<()> {
+        let _ = self.create_annot_impl(8, &quads, &[color.0, color.1, color.2], 3, contents, author)?;
+        Ok(())
+    }
+
+    /// add_underline_annot(quads, color=(0, 1, 0), contents="", author="") -> None
+    #[pyo3(signature = (quads, color=(0.0, 1.0, 0.0), contents="", author=""))]
+    fn add_underline_annot(
+        &self,
+        quads: Vec<(f32, f32, f32, f32, f32, f32, f32, f32)>,
+        color: (f32, f32, f32),
+        contents: &str,
+        author: &str,
+    ) -> PyResult<()> {
+        let _ = self.create_annot_impl(9, &quads, &[color.0, color.1, color.2], 3, contents, author)?;
+        Ok(())
+    }
+
+    /// add_strikeout_annot(quads, color=(1, 0, 0), contents="", author="") -> None
+    #[pyo3(signature = (quads, color=(1.0, 0.0, 0.0), contents="", author=""))]
+    fn add_strikeout_annot(
+        &self,
+        quads: Vec<(f32, f32, f32, f32, f32, f32, f32, f32)>,
+        color: (f32, f32, f32),
+        contents: &str,
+        author: &str,
+    ) -> PyResult<()> {
+        let _ = self.create_annot_impl(11, &quads, &[color.0, color.1, color.2], 3, contents, author)?;
+        Ok(())
+    }
+
+    /// add_text_annot(rect, contents, color=(1, 1, 0), author="") -> None
+    ///
+    /// 添加文本注释（sticky note）。rect 为 (x0, y0, x1, y1)。
+    #[pyo3(signature = (rect, contents, color=(1.0, 1.0, 0.0), author=""))]
+    fn add_text_annot(
+        &self,
+        rect: (f32, f32, f32, f32),
+        contents: &str,
+        color: (f32, f32, f32),
+        author: &str,
+    ) -> PyResult<()> {
+        // Text 注释用 rect 定位，不需要 quads
+        let color_arr = [color.0, color.1, color.2];
+        let idx = self.create_annot_impl(
+            0, /* PDF_ANNOT_TEXT */
+            &[],
+            &color_arr, 3,
+            contents, author,
+        )?;
+        // 设置 rect
+        let rect_arr = [rect.0, rect.1, rect.2, rect.3];
+        let rc = unsafe {
+            mupdf_safe_set_annot_rect(
+                self.ctx, self.raw_doc, self.raw,
+                idx, rect_arr.as_ptr(),
+            )
+        };
+        if rc != 0 {
+            return Err(PyDocument::last_error_pub());
+        }
+        Ok(())
+    }
+
+    /// delete_annot(index) -> None
+    ///
+    /// 删除指定索引的注释。
+    fn delete_annot(&self, index: i32) -> PyResult<()> {
+        let rc = unsafe {
+            mupdf_safe_delete_annot(self.ctx, self.raw_doc, self.raw, index)
+        };
+        if rc != 0 {
+            return Err(PyDocument::last_error_pub());
+        }
+        Ok(())
     }
 
     /// get_images(include_data=False) -> list[dict]
@@ -770,6 +975,41 @@ fn cbuf_to_pystring<'py>(
             let lossy = String::from_utf8_lossy(slice);
             Ok(PyString::new(py, &lossy))
         }
+    }
+}
+
+impl PyPage {
+    /// 创建注释，返回新注释在页面注释列表中的 index。
+    fn create_annot_impl(
+        &self,
+        annot_type: i32,
+        quads: &[(f32, f32, f32, f32, f32, f32, f32, f32)],
+        color: &[f32],
+        color_n: i32,
+        contents: &str,
+        _author: &str,
+    ) -> PyResult<i32> {
+        let flat_quads: Vec<f32> = quads.iter().flat_map(|q| {
+            [q.0, q.1, q.2, q.3, q.4, q.5, q.6, q.7]
+        }).collect();
+        let quad_count = quads.len() as i32;
+        let contents_c = std::ffi::CString::new(contents).unwrap_or_default();
+        let mut out_index: c_int = -1;
+        let rc = unsafe {
+            mupdf_safe_create_annot(
+                self.ctx, self.raw_doc, self.raw,
+                annot_type,
+                if flat_quads.is_empty() { ptr::null() } else { flat_quads.as_ptr() },
+                quad_count,
+                color_n, color.as_ptr(),
+                contents_c.as_ptr(),
+                &mut out_index,
+            )
+        };
+        if rc != 0 {
+            return Err(PyDocument::last_error_pub());
+        }
+        Ok(out_index)
     }
 }
 

@@ -37460,6 +37460,64 @@ extern "C" {
     ) -> ::std::os::raw::c_int;
 }
 extern "C" {
+    pub fn mupdf_safe_save_document(
+        ctx: *mut fz_context,
+        doc: *mut fz_document,
+        filename: *const ::std::os::raw::c_char,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn mupdf_safe_get_annotations(
+        ctx: *mut fz_context,
+        doc: *mut fz_document,
+        page: *mut fz_page,
+        out: *mut *mut ::std::os::raw::c_char,
+        out_len: *mut usize,
+        total_n: *mut ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn mupdf_safe_create_annot(
+        ctx: *mut fz_context,
+        doc: *mut fz_document,
+        page: *mut fz_page,
+        annot_type: ::std::os::raw::c_int,
+        quads: *const f32,
+        quad_count: ::std::os::raw::c_int,
+        color_n: ::std::os::raw::c_int,
+        color: *const f32,
+        contents: *const ::std::os::raw::c_char,
+        out_index: *mut ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn mupdf_safe_delete_annot(
+        ctx: *mut fz_context,
+        doc: *mut fz_document,
+        page: *mut fz_page,
+        index: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn mupdf_safe_set_annot_rect(
+        ctx: *mut fz_context,
+        doc: *mut fz_document,
+        page: *mut fz_page,
+        index: ::std::os::raw::c_int,
+        rect: *const f32,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn mupdf_safe_set_toc(
+        ctx: *mut fz_context,
+        doc: *mut fz_document,
+        levels: *const ::std::os::raw::c_int,
+        pages: *const ::std::os::raw::c_int,
+        titles: *const *const ::std::os::raw::c_char,
+        count: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
     pub fn mupdf_free(ptr: *mut ::std::os::raw::c_void);
 }
 extern "C" {

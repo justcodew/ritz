@@ -1411,6 +1411,414 @@ int mupdf_safe_load_outline(fz_context *ctx, fz_document *doc,
 }
 
 /* ====================================================================
+ * 文档保存
+ * ==================================================================== */
+
+int mupdf_safe_save_document(fz_context *ctx, fz_document *doc, const char *filename) {
+    if (!ctx || !doc || !filename) return -1;
+    mupdf_clear_error();
+    fz_try(ctx) {
+        pdf_document *pdf = pdf_document_from_fz_document(ctx, doc);
+        if (!pdf) fz_throw(ctx, FZ_ERROR_GENERIC, "not a pdf document");
+        pdf_save_document(ctx, pdf, filename, NULL);
+    }
+    fz_catch(ctx) {
+        set_error("save document: %s", fz_caught_message(ctx));
+        return -1;
+    }
+    return 0;
+}
+
+/* ====================================================================
+ * 注释读写（Phase 5b）
+ * ==================================================================== */
+
+/* Buffer 协议（每个注释一条记录）：
+ *   [type: i32]         enum pdf_annot_type
+ *   [rect: 4*f32]      x0, y0, x1, y1
+ *   [flags: i32]
+ *   [color_n: i32]      颜色分量数 (0=无颜色, 3=RGB, 4=CMYK)
+ *   [color: 4*f32]      颜色值（有效个数由 color_n 决定）
+ *   [contents_len: i32]
+ *   [author_len: i32]
+ *   [quad_count: i32]
+ *   [contents utf8 bytes]
+ *   [author utf8 bytes]
+ *   [quad0: 8*f32] ... [quadN: 8*f32]   fz_quad = ul,ur,ll,lr 每点 2 floats
+ */
+
+int mupdf_safe_get_annotations(fz_context *ctx, fz_document *doc, fz_page *page,
+                               char **out, size_t *out_len, int *total_n) {
+    if (!ctx || !doc || !page || !out || !out_len || !total_n) return -1;
+    *out = NULL; *out_len = 0; *total_n = 0;
+
+    growbuf gb = {0};
+    int count = 0;
+
+    mupdf_clear_error();
+    fz_try(ctx) {
+        pdf_document *pdf = pdf_document_from_fz_document(ctx, doc);
+        if (!pdf) fz_throw(ctx, FZ_ERROR_GENERIC, "not a pdf document");
+        pdf_page *ppage = pdf_page_from_fz_page(ctx, page);
+        if (!ppage) fz_throw(ctx, FZ_ERROR_GENERIC, "not a pdf page");
+
+        for (pdf_annot *annot = pdf_first_annot(ctx, ppage);
+             annot;
+             annot = pdf_next_annot(ctx, annot), count++) {
+
+            /* 读取注释属性 */
+            int type = (int)pdf_annot_type(ctx, annot);
+            fz_rect rect = {0, 0, 0, 0};
+            int flags = 0;
+            const char *contents = "";
+            const char *author = "";
+            int color_n = 0;
+            float color[4] = {0};
+            int quad_count = 0;
+
+            /* 仅从字典读属性，不调用 display/bound/synthesis 函数 */
+            pdf_obj *aobj = pdf_annot_obj(ctx, annot);
+            pdf_obj *robj = pdf_dict_get(ctx, aobj, PDF_NAME(Rect));
+            if (pdf_is_array(ctx, robj)) {
+                rect.x0 = pdf_to_real(ctx, pdf_array_get(ctx, robj, 0));
+                rect.y0 = pdf_to_real(ctx, pdf_array_get(ctx, robj, 1));
+                rect.x1 = pdf_to_real(ctx, pdf_array_get(ctx, robj, 2));
+                rect.y1 = pdf_to_real(ctx, pdf_array_get(ctx, robj, 3));
+            }
+            pdf_obj *cobj = pdf_dict_get(ctx, aobj, PDF_NAME(Contents));
+            if (pdf_is_string(ctx, cobj)) contents = pdf_to_str_buf(ctx, cobj);
+            pdf_obj *color_arr = pdf_dict_get(ctx, aobj, PDF_NAME(C));
+            if (pdf_is_array(ctx, color_arr)) {
+                color_n = pdf_array_len(ctx, color_arr);
+                for (int ci = 0; ci < color_n && ci < 4; ci++)
+                    color[ci] = pdf_to_real(ctx, pdf_array_get(ctx, color_arr, ci));
+            }
+            pdf_obj *qp = pdf_dict_get(ctx, aobj, PDF_NAME(QuadPoints));
+            if (pdf_is_array(ctx, qp)) quad_count = pdf_array_len(ctx, qp) / 8;
+
+            /* Highlight/Underline/StrikeOut 没有 Rect，从 QuadPoints 计算包围盒 */
+            if (rect.x0 == 0 && rect.y0 == 0 && rect.x1 == 0 && rect.y1 == 0
+                && pdf_is_array(ctx, qp) && pdf_array_len(ctx, qp) >= 8) {
+                float min_x = 1e30f, min_y = 1e30f, max_x = -1e30f, max_y = -1e30f;
+                int total_pts = pdf_array_len(ctx, qp);
+                for (int pi = 0; pi < total_pts; pi += 2) {
+                    float px = pdf_to_real(ctx, pdf_array_get(ctx, qp, pi));
+                    float py = pdf_to_real(ctx, pdf_array_get(ctx, qp, pi + 1));
+                    if (px < min_x) min_x = px;
+                    if (py < min_y) min_y = py;
+                    if (px > max_x) max_x = px;
+                    if (py > max_y) max_y = py;
+                }
+                rect.x0 = min_x; rect.y0 = min_y;
+                rect.x1 = max_x; rect.y1 = max_y;
+            }
+
+            int contents_len = contents ? (int)strlen(contents) : 0;
+            int author_len = author ? (int)strlen(author) : 0;
+
+            /* header */
+            gb_put(ctx, &gb, &type, 4);
+            gb_put(ctx, &gb, &rect.x0, 4);
+            gb_put(ctx, &gb, &rect.y0, 4);
+            gb_put(ctx, &gb, &rect.x1, 4);
+            gb_put(ctx, &gb, &rect.y1, 4);
+            gb_put(ctx, &gb, &flags, 4);
+            gb_put(ctx, &gb, &color_n, 4);
+            gb_put(ctx, &gb, color, 16);
+            gb_put(ctx, &gb, &contents_len, 4);
+            gb_put(ctx, &gb, &author_len, 4);
+            gb_put(ctx, &gb, &quad_count, 4);
+
+            /* variable-length fields */
+            if (contents_len > 0) gb_put(ctx, &gb, contents, (size_t)contents_len);
+            if (author_len > 0) gb_put(ctx, &gb, author, (size_t)author_len);
+
+            /* quad points — 直接从字典读取，避免 pdf_annot_quad_point 的副作用 */
+            pdf_obj *qp_arr = pdf_dict_get(ctx, aobj, PDF_NAME(QuadPoints));
+            if (pdf_is_array(ctx, qp_arr)) {
+                for (int qi = 0; qi < quad_count * 8; qi++) {
+                    float v = pdf_to_real(ctx, pdf_array_get(ctx, qp_arr, qi));
+                    gb_put(ctx, &gb, &v, 4);
+                }
+            }
+
+            /* 不 drop —— pdf_first_annot/pdf_next_annot 不 keep，
+               annot 由 page 持有，不应在此释放。 */
+        }
+    }
+    fz_catch(ctx) {
+        set_error("get annotations: %s", fz_caught_message(ctx));
+        if (gb.data) fz_free(ctx, gb.data);
+        return -1;
+    }
+
+    if (count == 0) {
+        if (gb.data) fz_free(ctx, gb.data);
+        return 0;
+    }
+
+    *out = (char *)gb.data;
+    *out_len = gb.len;
+    *total_n = count;
+    return 0;
+}
+
+int mupdf_safe_create_annot(fz_context *ctx, fz_document *doc, fz_page *page,
+                            int annot_type,
+                            const float *quads, int quad_count,
+                            int color_n, const float *color,
+                            const char *contents,
+                            int *out_index) {
+    if (!ctx || !doc || !page) return -1;
+
+    mupdf_clear_error();
+    fz_try(ctx) {
+        pdf_document *pdf = pdf_document_from_fz_document(ctx, doc);
+        if (!pdf) fz_throw(ctx, FZ_ERROR_GENERIC, "not a pdf document");
+        pdf_page *ppage = pdf_page_from_fz_page(ctx, page);
+        if (!ppage) fz_throw(ctx, FZ_ERROR_GENERIC, "not a pdf page");
+
+        /* 计算新注释的 index（创建前的注释数量） */
+        if (out_index) {
+            int idx = 0;
+            for (pdf_annot *a = pdf_first_annot(ctx, ppage); a; a = pdf_next_annot(ctx, a)) {
+                idx++;
+            }
+            *out_index = idx;
+        }
+
+        /* 使用 pdf_create_annot_raw 而非 pdf_create_annot，避免
+           pdf_begin_operation / pdf_end_operation 导致的链表损坏。 */
+        pdf_annot *annot = pdf_create_annot_raw(ctx, ppage, (enum pdf_annot_type)annot_type);
+
+        if (quads && quad_count > 0) {
+            for (int i = 0; i < quad_count; i++) {
+                const float *q = &quads[i * 8];
+                fz_quad quad;
+                quad.ul.x = q[0]; quad.ul.y = q[1];
+                quad.ur.x = q[2]; quad.ur.y = q[3];
+                quad.ll.x = q[4]; quad.ll.y = q[5];
+                quad.lr.x = q[6]; quad.lr.y = q[7];
+                pdf_add_annot_quad_point(ctx, annot, quad);
+            }
+        }
+
+        if (color && color_n > 0) {
+            pdf_set_annot_color(ctx, annot, color_n, color);
+        }
+
+        if (contents && contents[0]) {
+            pdf_set_annot_contents(ctx, annot, contents);
+        }
+
+        /* 不调用 pdf_update_annot —— appearance stream 在 doc.save() 时自动合成。 */
+
+        /* pdf_create_annot_raw 返回 refcount=2（内部 keep + page 持有）。
+           drop 一次使 refcount 降回 1（page 持有）。 */
+        pdf_drop_annot(ctx, annot);
+    }
+    fz_catch(ctx) {
+        set_error("create annot: %s", fz_caught_message(ctx));
+        return -1;
+    }
+    return 0;
+}
+
+int mupdf_safe_delete_annot(fz_context *ctx, fz_document *doc, fz_page *page, int index) {
+    if (!ctx || !doc || !page || index < 0) return -1;
+
+    mupdf_clear_error();
+    fz_try(ctx) {
+        pdf_document *pdf = pdf_document_from_fz_document(ctx, doc);
+        if (!pdf) fz_throw(ctx, FZ_ERROR_GENERIC, "not a pdf document");
+        pdf_page *ppage = pdf_page_from_fz_page(ctx, page);
+        if (!ppage) fz_throw(ctx, FZ_ERROR_GENERIC, "not a pdf page");
+
+        pdf_annot *annot = pdf_first_annot(ctx, ppage);
+        for (int i = 0; i < index && annot; i++) {
+            annot = pdf_next_annot(ctx, annot);
+        }
+        if (!annot) fz_throw(ctx, FZ_ERROR_GENERIC, "annot index out of range");
+        pdf_delete_annot(ctx, ppage, annot);
+    }
+    fz_catch(ctx) {
+        set_error("delete annot: %s", fz_caught_message(ctx));
+        return -1;
+    }
+    return 0;
+}
+
+int mupdf_safe_set_annot_rect(fz_context *ctx, fz_document *doc, fz_page *page,
+                              int index, const float *rect) {
+    if (!ctx || !doc || !page || !rect || index < 0) return -1;
+
+    mupdf_clear_error();
+    fz_try(ctx) {
+        pdf_document *pdf = pdf_document_from_fz_document(ctx, doc);
+        if (!pdf) fz_throw(ctx, FZ_ERROR_GENERIC, "not a pdf document");
+        pdf_page *ppage = pdf_page_from_fz_page(ctx, page);
+        if (!ppage) fz_throw(ctx, FZ_ERROR_GENERIC, "not a pdf page");
+
+        pdf_annot *annot = pdf_first_annot(ctx, ppage);
+        for (int i = 0; i < index && annot; i++) {
+            annot = pdf_next_annot(ctx, annot);
+        }
+        if (!annot) fz_throw(ctx, FZ_ERROR_GENERIC, "annot index out of range");
+
+        fz_rect r;
+        r.x0 = rect[0]; r.y0 = rect[1];
+        r.x1 = rect[2]; r.y1 = rect[3];
+        pdf_set_annot_rect(ctx, annot, r);
+        pdf_update_annot(ctx, annot);
+    }
+    fz_catch(ctx) {
+        set_error("set annot rect: %s", fz_caught_message(ctx));
+        return -1;
+    }
+    return 0;
+}
+
+/* ====================================================================
+ * 大纲写入（Phase 5c）
+ *
+ * 直接操作 PDF outline 对象构建树结构，不使用 fz_outline_iterator
+ * （iterator 的 up/down 在 root-child ↔ root 转换时有设计缺陷）。
+ * ==================================================================== */
+
+static void clear_outline_entries(fz_context *ctx, pdf_obj *outlines) {
+    pdf_obj *child = pdf_dict_get(ctx, outlines, PDF_NAME(First));
+    while (child) {
+        if (pdf_dict_get(ctx, child, PDF_NAME(First))) {
+            clear_outline_entries(ctx, child);
+        }
+        pdf_obj *next = pdf_dict_get(ctx, child, PDF_NAME(Next));
+        pdf_dict_del(ctx, child, PDF_NAME(Parent));
+        pdf_dict_del(ctx, child, PDF_NAME(First));
+        pdf_dict_del(ctx, child, PDF_NAME(Last));
+        pdf_dict_del(ctx, child, PDF_NAME(Next));
+        pdf_dict_del(ctx, child, PDF_NAME(Prev));
+        child = next;
+    }
+    pdf_dict_del(ctx, outlines, PDF_NAME(First));
+    pdf_dict_del(ctx, outlines, PDF_NAME(Last));
+    pdf_dict_del(ctx, outlines, PDF_NAME(Count));
+}
+
+int mupdf_safe_set_toc(fz_context *ctx, fz_document *doc,
+                       const int *levels, const int *pages,
+                       const char **titles, int count) {
+    if (!ctx || !doc) return -1;
+    if (count < 0) return -1;
+    if (count > 0 && (!levels || !pages || !titles)) return -1;
+
+    mupdf_clear_error();
+    fz_try(ctx) {
+        pdf_document *pdf = pdf_document_from_fz_document(ctx, doc);
+        if (!pdf) fz_throw(ctx, FZ_ERROR_GENERIC, "not a pdf document");
+
+        int page_count = fz_count_pages(ctx, doc);
+
+        pdf_obj *trailer = pdf_trailer(ctx, pdf);
+        if (!trailer) fz_throw(ctx, FZ_ERROR_GENERIC, "pdf_trailer returned NULL");
+
+        pdf_obj *catalog = pdf_dict_get(ctx, trailer, PDF_NAME(Root));
+        if (!catalog) fz_throw(ctx, FZ_ERROR_GENERIC, "catalog (Root) not found in trailer");
+
+        /* 清空现有大纲 */
+        pdf_obj *outlines = pdf_dict_get(ctx, catalog, PDF_NAME(Outlines));
+        if (pdf_is_dict(ctx, outlines)) {
+            clear_outline_entries(ctx, outlines);
+        }
+
+        if (count == 0) {
+            /* 清空：移除 catalog 中的 /Outlines 引用 */
+            if (outlines) pdf_dict_del(ctx, catalog, PDF_NAME(Outlines));
+            fz_always(ctx) {}
+            fz_catch(ctx) {}
+            return 0;
+        }
+
+        /* 创建或复用 /Outlines 字典 */
+        if (!pdf_is_dict(ctx, outlines)) {
+            outlines = pdf_add_new_dict(ctx, pdf, 4);
+            pdf_dict_put(ctx, catalog, PDF_NAME(Outlines), outlines);
+            pdf_dict_put(ctx, outlines, PDF_NAME(Type), PDF_NAME(Outlines));
+        }
+
+        /*
+         * 逐条构建 outline 树。
+         *
+         * stack[level] = 该 level 当前最后一个 outline entry（用于链接 Next）。
+         * parent_of[level] = 该 level 的父 pdf_obj（用于设置 Parent 和 First/Last）。
+         *
+         * level 从 1 开始。level 1 的父是 outlines 字典本身。
+         */
+        #define MAX_TOC_DEPTH 16
+        pdf_obj *stack[MAX_TOC_DEPTH + 1] = {0};
+        pdf_obj *parent_of[MAX_TOC_DEPTH + 1] = {0};
+        parent_of[1] = outlines; /* level 1 条目的父是 /Outlines 字典 */
+
+        for (int i = 0; i < count; i++) {
+            int level = levels[i];
+            if (level < 1) level = 1;
+            if (level > MAX_TOC_DEPTH) level = MAX_TOC_DEPTH;
+
+            int page_num = pages[i];
+            if (page_num < 1 || page_num > page_count) {
+                fz_throw(ctx, FZ_ERROR_GENERIC,
+                    "page number %d out of range (1..%d)", page_num, page_count);
+            }
+
+            /* 创建 outline entry 对象 */
+            pdf_obj *entry = pdf_add_new_dict(ctx, pdf, 8);
+
+            /* Title */
+            pdf_dict_put_text_string(ctx, entry, PDF_NAME(Title), titles[i]);
+
+            /* Dest: [page_obj /Fit] */
+            pdf_obj *page_obj = pdf_lookup_page_obj(ctx, pdf, page_num - 1);
+            if (page_obj) {
+                pdf_obj *dest = pdf_add_new_array(ctx, pdf, 2);
+                pdf_array_push(ctx, dest, page_obj);
+                pdf_array_push(ctx, dest, PDF_NAME(Fit));
+                pdf_dict_put(ctx, entry, PDF_NAME(Dest), dest);
+            }
+
+            /* 链接到树结构 */
+            pdf_obj *parent = parent_of[level];
+            pdf_dict_put(ctx, entry, PDF_NAME(Parent), parent);
+
+            pdf_obj *last_child = stack[level];
+            if (!last_child) {
+                /* 该 level 尚无条目 → 设为父的 First */
+                pdf_dict_put(ctx, parent, PDF_NAME(First), entry);
+            } else {
+                /* 链接到同级前一条目 */
+                pdf_dict_put(ctx, last_child, PDF_NAME(Next), entry);
+                pdf_dict_put(ctx, entry, PDF_NAME(Prev), last_child);
+            }
+            pdf_dict_put(ctx, parent, PDF_NAME(Last), entry);
+
+            /* 更新栈：当前 level 指向新条目，子 level 以新条目为父 */
+            stack[level] = entry;
+            if (level + 1 <= MAX_TOC_DEPTH)
+                parent_of[level + 1] = entry;
+            /* 清除更深层级的栈（新条目尚无子条目） */
+            for (int d = level + 1; d <= MAX_TOC_DEPTH; d++) {
+                stack[d] = NULL;
+            }
+        }
+        #undef MAX_TOC_DEPTH
+    }
+    fz_always(ctx) {}
+    fz_catch(ctx) {
+        set_error("set toc: %s", fz_caught_message(ctx));
+        return -1;
+    }
+    return 0;
+}
+
+/* ====================================================================
  * 内存释放
  * ==================================================================== */
 

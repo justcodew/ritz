@@ -409,7 +409,7 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
 name = "mupdf"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "criterion",
  "mupdf-sys",
@@ -417,7 +417,7 @@ dependencies = [
 
 [[package]]
 name = "mupdf-sys"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bindgen",
  "cc",
@@ -630,7 +630,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "ritz"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "mupdf",
  "mupdf-sys",

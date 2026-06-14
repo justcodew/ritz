@@ -187,6 +187,34 @@ int mupdf_safe_search_stext_page(fz_context *ctx, fz_stext_page *stpage,
 int mupdf_safe_load_outline(fz_context *ctx, fz_document *doc,
                             char **out, size_t *out_len, int *total_n);
 
+/* ---- 文档保存 ---- */
+int mupdf_safe_save_document(fz_context *ctx, fz_document *doc, const char *filename);
+
+/* ---- 注释（Phase 5b） ---- */
+int mupdf_safe_get_annotations(fz_context *ctx, fz_document *doc, fz_page *page,
+                               char **out, size_t *out_len, int *total_n);
+int mupdf_safe_create_annot(fz_context *ctx, fz_document *doc, fz_page *page,
+                            int annot_type,
+                            const float *quads, int quad_count,
+                            int color_n, const float *color,
+                            const char *contents,
+                            int *out_index);
+int mupdf_safe_delete_annot(fz_context *ctx, fz_document *doc, fz_page *page, int index);
+int mupdf_safe_set_annot_rect(fz_context *ctx, fz_document *doc, fz_page *page,
+                              int index, const float *rect);
+
+/* ---- 大纲写入（Phase 5c） ---- */
+/*
+ * 用给定条目替换文档大纲（目录）。
+ * levels[i] = 1-based 层级，pages[i] = 1-based 页码，titles[i] = UTF-8 标题。
+ * count = 条目数。传 count=0 清空大纲。
+ * 内部使用 fz_outline_iterator API，URI 格式 #page=N&view=Fit。
+ * 返回 0 成功，-1 失败。
+ */
+int mupdf_safe_set_toc(fz_context *ctx, fz_document *doc,
+                       const int *levels, const int *pages,
+                       const char **titles, int count);
+
 /* ---- 内存释放 ---- */
 void mupdf_free(void *ptr);
 

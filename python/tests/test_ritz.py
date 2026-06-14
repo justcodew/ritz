@@ -488,3 +488,201 @@ class TestProcessDocuments:
         results = ritz.process_documents(["/nonexistent/a.pdf", "/nonexistent/b.pdf"])
         assert len(results) == 2
         assert all(r is None for r in results)
+
+
+# ----------------------------------------------------------------------------
+# doc.save() (Phase A)
+# ----------------------------------------------------------------------------
+
+class TestSave:
+    def test_save_basic(self, doc, tmp_path):
+        out = tmp_path / "saved.pdf"
+        doc.save(str(out))
+        assert out.exists()
+        assert out.stat().st_size > 100
+
+    def test_save_roundtrip(self, doc, tmp_path):
+        out = tmp_path / "roundtrip.pdf"
+        doc.save(str(out))
+        d2 = ritz.open(str(out))
+        assert len(d2) == len(doc)
+        # 文本内容应一致
+        for i in range(min(3, len(doc))):
+            t1 = doc[i].get_text("text")
+            t2 = d2[i].get_text("text")
+            assert t1 == t2
+
+    def test_save_invalid_path(self, doc):
+        with pytest.raises(Exception):
+            doc.save("/nonexistent/dir/out.pdf")
+
+
+# ----------------------------------------------------------------------------
+# 注释读写 (Phase 5b)
+# ----------------------------------------------------------------------------
+
+class TestAnnotations:
+    def test_get_annotations_empty(self, doc):
+        """sample.pdf 无注释，返回空 list。"""
+        annots = doc[0].get_annotations()
+        assert isinstance(annots, list)
+        assert len(annots) == 0
+
+    def test_add_and_read_annotations(self, tmp_path):
+        """在单个文档上依次添加各类注释并验证读取。"""
+        d = ritz.open(sample_pdf())
+        page = d[0]
+        hits = page.search_for("easy", quads=True)
+        if not hits:
+            pytest.skip("sample.pdf has no 'easy' text")
+
+        # 1. Highlight
+        page.add_highlight_annot([hits[0]], color=(1.0, 1.0, 0.0))
+        annots = page.get_annotations()
+        hl = [a for a in annots if a["type"] == "Highlight"]
+        assert len(hl) >= 1
+        assert hl[0]["rect"][2] > hl[0]["rect"][0]
+
+        # 2. Underline
+        if len(hits) >= 2:
+            page.add_underline_annot([hits[1]], color=(0.0, 1.0, 0.0))
+        else:
+            page.add_underline_annot([hits[0]], color=(0.0, 1.0, 0.0))
+        annots = page.get_annotations()
+        ul = [a for a in annots if a["type"] == "Underline"]
+        assert len(ul) >= 1
+
+        # 3. StrikeOut
+        page.add_strikeout_annot([hits[0]], color=(1.0, 0.0, 0.0))
+        annots = page.get_annotations()
+        so = [a for a in annots if a["type"] == "StrikeOut"]
+        assert len(so) >= 1
+
+        # 4. Text (sticky note)
+        page.add_text_annot(
+            rect=(100.0, 100.0, 120.0, 120.0),
+            contents="Hello from ritz!",
+            color=(1.0, 1.0, 0.0),
+        )
+        annots = page.get_annotations()
+        text_annots = [a for a in annots if a["type"] == "Text"]
+        assert len(text_annots) >= 1
+        assert text_annots[0]["contents"] == "Hello from ritz!"
+
+        # 5. Color 验证（highlight 使用 yellow = (1,1,0)）
+        hl = [a for a in annots if a["type"] == "Highlight"]
+        c = hl[0]["color"]
+        assert abs(c[0] - 1.0) < 0.01
+        assert abs(c[1] - 1.0) < 0.01
+        assert abs(c[2] - 0.0) < 0.01
+
+        # 6. Save + reopen 验证持久化
+        out = tmp_path / "annots.pdf"
+        d.save(str(out))
+        del d, page
+
+        d2 = ritz.open(str(out))
+        annots2 = d2[0].get_annotations()
+        assert len(annots2) >= 4  # at least hl + ul + so + text
+        text2 = [a for a in annots2 if a["type"] == "Text"]
+        assert text2[0]["contents"] == "Hello from ritz!"
+
+    def test_delete_annot(self):
+        """删除注释。"""
+        d = ritz.open(sample_pdf())
+        page = d[0]
+
+        page.add_text_annot(rect=(10.0, 10.0, 30.0, 30.0), contents="to delete")
+        annots_before = page.get_annotations()
+        assert len(annots_before) >= 1
+
+        page.delete_annot(0)
+        annots_after = page.get_annotations()
+        assert len(annots_after) == len(annots_before) - 1
+
+
+class TestSetToc:
+    """doc.set_toc() 大纲写入测试。"""
+
+    def test_set_toc_basic(self, tmp_path):
+        """设置简单大纲 → get_toc 验证。"""
+        d = ritz.open(sample_pdf())
+        toc = [
+            (1, "Chapter 1", 1),
+            (1, "Chapter 2", 1),
+        ]
+        d.set_toc(toc)
+        out = tmp_path / "toc_basic.pdf"
+        d.save(str(out))
+
+        d2 = ritz.open(str(out))
+        result = d2.get_toc()
+        assert result is not None
+        assert len(result) == 2
+        assert result[0][0] == 1
+        assert result[0][1] == "Chapter 1"
+        assert result[0][2] == 1
+        assert result[1][0] == 1
+        assert result[1][1] == "Chapter 2"
+        assert result[1][2] == 1
+
+    def test_set_toc_nested(self, tmp_path):
+        """多层级大纲。"""
+        d = ritz.open(sample_pdf())
+        toc = [
+            (1, "Part I", 1),
+            (2, "Chapter 1", 1),
+            (3, "Section 1.1", 1),
+            (2, "Chapter 2", 1),
+            (1, "Part II", 1),
+        ]
+        d.set_toc(toc)
+        out = tmp_path / "toc_nested.pdf"
+        d.save(str(out))
+
+        d2 = ritz.open(str(out))
+        result = d2.get_toc()
+        assert result is not None
+        assert len(result) == 5
+        levels = [r[0] for r in result]
+        assert levels == [1, 2, 3, 2, 1]
+        titles = [r[1] for r in result]
+        assert titles == ["Part I", "Chapter 1", "Section 1.1", "Chapter 2", "Part II"]
+
+    def test_set_toc_empty(self, tmp_path):
+        """传空 list 清空大纲。"""
+        d = ritz.open(sample_pdf())
+        # 先设置一些条目
+        d.set_toc([(1, "Temp", 1)])
+        # 再清空
+        d.set_toc([])
+        out = tmp_path / "toc_empty.pdf"
+        d.save(str(out))
+
+        d2 = ritz.open(str(out))
+        result = d2.get_toc()
+        assert result is None
+
+    def test_set_toc_survives_save(self, tmp_path):
+        """set → save → 重新打开 → get_toc 验证持久化。"""
+        d = ritz.open(sample_pdf())
+        toc = [
+            (1, "Introduction", 1),
+            (2, "Background", 1),
+            (1, "Methods", 1),
+            (2, "Data Collection", 1),
+            (2, "Analysis", 1),
+            (1, "Results", 1),
+            (1, "Conclusion", 1),
+        ]
+        d.set_toc(toc)
+        out = tmp_path / "toc_persist.pdf"
+        d.save(str(out))
+
+        d2 = ritz.open(str(out))
+        result = d2.get_toc()
+        assert result is not None
+        assert len(result) == 7
+        assert result[0][1] == "Introduction"
+        assert result[6][1] == "Conclusion"
+        assert result[3][0] == 2  # "Data Collection" level

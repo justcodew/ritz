@@ -6,7 +6,8 @@ use mupdf_sys::{
     mupdf_ext_extract_pages_text, mupdf_safe_authenticate_password, mupdf_safe_count_pages,
     mupdf_safe_drop_document, mupdf_safe_drop_context, mupdf_safe_load_outline,
     mupdf_safe_load_page, mupdf_safe_lookup_metadata, mupdf_safe_needs_password,
-    mupdf_safe_new_context, mupdf_safe_open_document,
+    mupdf_safe_new_context, mupdf_safe_open_document, mupdf_safe_save_document,
+    mupdf_safe_set_toc,
 };
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -227,6 +228,57 @@ impl PyDocument {
 
         unsafe { mupdf_sys::mupdf_free(ptr as *mut _) };
         result
+    }
+
+    /// save(path) -> None。
+    /// 将文档保存到指定路径（PDF 格式）。
+    /// 支持增量保存和完整重写，由 MuPDF 内部决定。
+    fn save(&self, path: &str) -> PyResult<()> {
+        let c_path = CString::new(path)
+            .map_err(|_| PyRuntimeError::new_err("path contains NUL byte"))?;
+        let rc = unsafe { mupdf_safe_save_document(self.ctx, self.raw, c_path.as_ptr()) };
+        if rc != 0 {
+            return Err(Self::last_error_pub());
+        }
+        Ok(())
+    }
+
+    /// set_toc(toc) -> None
+    ///
+    /// 设置文档大纲（目录）。格式与 get_toc() 返回值一致：
+    /// 每条为 (level, title, page)，其中 level 从 1 开始，page 从 1 开始。
+    /// 传空 list 清空大纲。
+    ///
+    /// 仅对 PDF 文档有效。
+    fn set_toc(&self, toc: Vec<(i32, String, i32)>) -> PyResult<()> {
+        if toc.is_empty() {
+            let rc = unsafe {
+                mupdf_safe_set_toc(self.ctx, self.raw, ptr::null(), ptr::null(), ptr::null(), 0)
+            };
+            if rc != 0 {
+                return Err(Self::last_error_pub());
+            }
+            return Ok(());
+        }
+
+        let levels: Vec<c_int> = toc.iter().map(|(l, _, _)| *l as c_int).collect();
+        let pages: Vec<c_int> = toc.iter().map(|(_, _, p)| *p as c_int).collect();
+        let c_titles: Vec<CString> = toc.iter()
+            .map(|(_, t, _)| CString::new(t.as_str()).unwrap_or_default())
+            .collect();
+        let title_ptrs: Vec<*const c_char> = c_titles.iter().map(|c| c.as_ptr()).collect();
+
+        let rc = unsafe {
+            mupdf_safe_set_toc(
+                self.ctx, self.raw,
+                levels.as_ptr(), pages.as_ptr(),
+                title_ptrs.as_ptr(), toc.len() as c_int,
+            )
+        };
+        if rc != 0 {
+            return Err(Self::last_error_pub());
+        }
+        Ok(())
     }
 
     /// load_page(index) -> Page。
