@@ -1,6 +1,6 @@
 # rayon 并行与批量提取
 
-> plan_v1 §5.3 的并行策略。本文解释为什么 fz_context 不能跨线程共享，以及 ritz 如何用 rayon + 独立 ctx 实现真正的多文档并行。
+> [plan_v1 §5.3](../plan/01-plan-v1.md) 的并行策略。本文解释为什么 fz_context 不能跨线程共享，以及 ritz 如何用 rayon + 独立 ctx 实现真正的多文档并行。
 
 ## 问题：MuPDF 不是线程安全的
 

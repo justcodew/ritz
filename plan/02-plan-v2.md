@@ -1,6 +1,6 @@
 # 实施计划 v2：高性能 PDF 处理库（Rust + MuPDF）
 
-> 基于 plan_v1.md，结合 LiteParse / gomupdf / PyMuPDF 源码深挖结果细化。
+> 基于 [plan_v1.md](./01-plan-v1.md)，结合 LiteParse / gomupdf / PyMuPDF 源码深挖结果细化。
 > 本文档为可执行工程方案，含 crate 结构、关键代码骨架、工程量估算、分阶段交付。
 
 ---
@@ -719,7 +719,7 @@ add_redact_annot = _not_implemented("add_redact_annot")
 - [ ] `get_text_batch()` 批量提取比逐页快 ≥ 2x
 - [ ] 多文档 rayon 并行近线性加速
 - [ ] Rust 单元测试覆盖率 ≥ 70%
-- [ ] 性能基准达 plan_v1 §4.1 目标（±10%）
+- [ ] 性能基准达 [plan_v1 §4.1](./01-plan-v1.md) 目标（±10%）
 - [ ] LICENSE 为 AGPL-3.0
 - [ ] README 含安装、快速开始、API 差异、性能对比
 

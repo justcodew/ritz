@@ -274,7 +274,7 @@ y_new = page_height - y_old
 
 **交付物**：性能基准报告 + 完整测试套件。
 
-> 详细 crate 结构、关键代码骨架（error_wrapper.c / 安全封装 / PyO3）、风险矩阵见 `plan_v2.md`。
+> 详细 crate 结构、关键代码骨架（error_wrapper.c / 安全封装 / PyO3）、风险矩阵见 [plan_v2.md](./02-plan-v2.md)。
 
 ---
 
@@ -303,7 +303,7 @@ y_new = page_height - y_old
 
 - **LiteParse 源码**：<https://github.com/run-llama/liteparse>
   - 重点参考 `liteparse-pdfium-sys` 和 `liteparse-pdfium` 的分层架构、动态库加载、PyO3 绑定。
-- **Rennie 文章**：*I built the same software 3 times, then Rust showed me a better way*
+- **Rennie 文章**：[03-rennie-data-model.md](./03-rennie-data-model.md)（*I built the same software 3 times, then Rust showed me a better way* 翻译）
   - 重点借鉴其 **enum 替代继承树、返回副本、紧凑内存布局** 思想。
 - **mupdf-rs**：<https://github.com/jrmuizel/mupdf-rs>
   - 参考其 `build.rs` 与绑定生成方式。

@@ -137,7 +137,7 @@ result
 
 ## 验证：1000 页内存 + 1000 次循环泄漏
 
-`benchmarks/leak_test.py` 做了两类验证（plan_v1 §4.2 要求）：
+`benchmarks/leak_test.py` 做了两类验证（[plan_v1 §4.2](../plan/01-plan-v1.md) 要求）：
 
 ### A. 常驻内存（1000 页 ≤ 200 MB）
 

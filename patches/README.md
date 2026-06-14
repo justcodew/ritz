@@ -1,4 +1,4 @@
-# patches/ — MuPDF 补丁管理（plan_v1 §5.5）
+# patches/ — MuPDF 补丁管理（[plan_v1 §5.5](../plan/01-plan-v1.md)）
 
 本目录存放对 `vendor/mupdf` 子模块的本地修改。`crates/mupdf-sys/build.rs`
 在每次编译前自动按字母顺序应用所有 `*.patch` 文件。
@@ -41,7 +41,7 @@ cargo build -p mupdf-sys
 # 无 "applied" 警告 = 已应用，正确跳过
 ```
 
-## 设计原则（plan_v1 §5.5）
+## 设计原则（[plan_v1 §5.5](../plan/01-plan-v1.md)）
 
 - **不修改 MuPDF 已有函数的行为** — 只在独立文件新增辅助函数
 - **补丁文件命名**：`mupdf_ext_` 前缀给新增函数，`mupdf_safe_` 给错误包装

@@ -71,7 +71,7 @@
 - **元数据**：`doc.metadata` @property 返回完整 dict（`format/title/author/.../encryption`）；
   `doc.lookup_metadata(key)` 单字段查询
 
-### Added — 批量与并行扩展（plan_v1 §3.4）
+### Added — 批量与并行扩展（[plan_v1 §3.4](plan/01-plan-v1.md)）
 
 - **`doc.get_text_batch()`** —— 1 次 FFI 调用拿全部页文本（vs per-page 循环 N 次 FFI）。
   内部走 `mupdf_ext_extract_pages_text` 流式 growbuf。详见 [docx/06-parallel-and-batch.md](docx/06-parallel-and-batch.md)
@@ -80,13 +80,13 @@
   `mode` 可选 `text`（快速批处理路径）/ `html` / `xhtml` / `xml` / `json`。
   失败文档返回 `None`，成功文档返回 `list[str]`
 
-### Added — 数据模型（plan_v1 §5.2 Rennie）
+### Added — 数据模型（[plan_v1 §5.2](plan/01-plan-v1.md) Rennie）
 
 - **`PdfValue`** —— 10 种 PDF 对象类型的 Rust `enum`（Null/Bool/Int/Float/Name/Str/Array/Dict/Stream/Ref）。
   通过 `from ritz import PdfValue` 暴露给 Python，全套构造器 + `to_python()` / `get()` 转换。
   详见 [docx/01-architecture.md §"关键技术决策"](docx/01-architecture.md)
 
-### Added — 构建基础设施（plan_v1 §5.5）
+### Added — 构建基础设施（[plan_v1 §5.5](plan/01-plan-v1.md)）
 
 - **MuPDF 1.27.0 git submodule**（`vendor/mupdf/`）—— 源码编译，不依赖系统 MuPDF
 - **patches/ 工作流** —— `build.rs` 在编译前自动按字母顺序应用 `patches/*.patch` 到子模块，幂等跳过已应用的。
@@ -148,7 +148,7 @@ vs PyMuPDF（详见 [benchmarks/benchmark_report.md](benchmarks/benchmark_report
   为 `std::str::from_utf8` + 单次 `PyString::new`。实测不可测（<0.5%，被 stext 构造淹没），
   保留是为代码清晰度 + 未来 stext 路径若被优化后发挥作用
 
-### Security — 安全验证（plan_v1 §4.2）
+### Security — 安全验证（[plan_v1 §4.2](plan/01-plan-v1.md)）
 
 - **1000 页 PDF 常驻内存 ≤200MB** —— 实测 72.9MB ✅
 - **1000 次 open/close + page 迭代循环泄漏 <5KB/iter** —— 实测达标 ✅

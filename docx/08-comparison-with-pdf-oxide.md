@@ -146,7 +146,7 @@ pdf_oxide README 宣称 "99.5% text parity vs PyMuPDF and pypdfium2"，但实测
 |---|------|-----------|
 | 许可证 | AGPL-3.0（被 MuPDF 强制） | MIT/Apache-2.0 |
 | 商业闭源使用 | 需购买 [Artifex MuPDF commercial license](https://mupdf.com/licensing/index.html) | 自由使用 |
-| 修改 MuPDF 源码 | 允许（plan_v1 §5.5 patches/ 工作流） | N/A |
+| 修改 MuPDF 源码 | 允许（[plan_v1 §5.5](../plan/01-plan-v1.md) patches/ 工作流） | N/A |
 
 **这是 ritz 最大的劣势**。任何商业闭源产品想用 ritz 必须买 MuPDF 商业许可。pdf_oxide 没有这个问题。
 

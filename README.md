@@ -200,8 +200,8 @@ results = ritz.process_documents(paths)
 2. **C 层扁平化**：stext/image/links 的链表/树遍历都在 C 层完成，输出连续二进制 buffer 给 Rust，避免 N 次 FFI 往返和 Python 对象构造开销（链接读取 27x 的根因）。
 3. **`Py<PyDocument>` 引用计数**：Page 和 Pixmap 持有 `Py<PyDocument>` 句柄防止 ctx 在 GC 时被先释放。
 4. **rayon 并行**：每文档独立 fz_context（无锁函数），`py.detach` 释放 GIL 让 worker 真正并行。
-5. **patches/ 工作流**（plan §5.5）：`build.rs` 在编译前自动应用 `patches/*.patch` 到 MuPDF 子模块，幂等跳过已应用的。详见 [patches/README.md](patches/README.md)。
-6. **`PdfValue` 数据模型**（plan §5.2 Rennie）：10 种 PDF 对象类型在 Rust 用 `enum`，已暴露给 Python：`from ritz import PdfValue`，支持 `null/bool/int/float/name/str/array/dict/stream/ref` 全套构造和 `to_python()` 转换。
+5. **patches/ 工作流**（[plan_v1 §5.5](plan/01-plan-v1.md)）：`build.rs` 在编译前自动应用 `patches/*.patch` 到 MuPDF 子模块，幂等跳过已应用的。详见 [patches/README.md](patches/README.md)。
+6. **`PdfValue` 数据模型**（[plan_v1 §5.2](plan/01-plan-v1.md) Rennie）：10 种 PDF 对象类型在 Rust 用 `enum`，已暴露给 Python：`from ritz import PdfValue`，支持 `null/bool/int/float/name/str/array/dict/stream/ref` 全套构造和 `to_python()` 转换。
 
 ## 基准测试
 

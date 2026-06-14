@@ -158,7 +158,7 @@ fz_run_display_list(ctx, list, (fz_device*)cap, fz_identity, fz_infinite_rect, N
 // 运行结束后，cap->gb 里就是所有图片的扁平化数据
 ```
 
-**一次 device 遍历 = 所有图片的 bbox + data**，这是 plan_v1 §3.2 "一级图片提取"的实现。
+**一次 device 遍历 = 所有图片的 bbox + data**，这是 [plan_v1 §3.2](../plan/01-plan-v1.md) "一级图片提取"的实现。
 
 ### dict 模式：嵌套结构扁平化
 
