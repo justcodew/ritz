@@ -6,10 +6,10 @@ use mupdf_sys::{
     self, fz_context, fz_page, mupdf_safe_bound_page, mupdf_safe_bound_page_box,
     mupdf_safe_drop_page, mupdf_safe_drop_stext_page, mupdf_safe_get_images,
     mupdf_safe_load_links, mupdf_safe_new_stext_page, mupdf_safe_page_rotation,
-    mupdf_safe_render_pixmap, mupdf_safe_stext_to_blocks, mupdf_safe_stext_to_dict,
-    mupdf_safe_stext_to_html, mupdf_safe_stext_to_json, mupdf_safe_stext_to_text,
-    mupdf_safe_stext_to_words, mupdf_safe_stext_to_xml, mupdf_safe_stext_to_xhtml,
-    fz_pixmap, fz_stext_page,
+    mupdf_safe_render_pixmap, mupdf_safe_search_stext_page, mupdf_safe_stext_to_blocks,
+    mupdf_safe_stext_to_dict, mupdf_safe_stext_to_html, mupdf_safe_stext_to_json,
+    mupdf_safe_stext_to_text, mupdf_safe_stext_to_words, mupdf_safe_stext_to_xml,
+    mupdf_safe_stext_to_xhtml, fz_pixmap, fz_stext_page,
 };
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -197,6 +197,78 @@ impl PyPage {
         })();
 
         unsafe { mupdf_sys::mupdf_free(ptr as *mut _) };
+        result
+    }
+
+    /// search_for(needle, quads=False) -> list
+    ///
+    /// 在页面文本中搜索 needle（大小写不敏感）。PyMuPDF 兼容。
+    ///
+    /// - `quads=False`（默认）：返回每个命中位置的包围矩形
+    ///   `list[(x0, y0, x1, y1)]`
+    /// - `quads=True`：返回每个命中位置的 4 顶点（顺时针：ul→ur→lr→ll）
+    ///   `list[(ul_x, ul_y, ur_x, ur_y, lr_x, lr_y, ll_x, ll_y)]`
+    ///
+    /// 一次命中跨多行会产生多个 quad/rect。
+    #[pyo3(signature = (needle, quads=false))]
+    fn search_for(&self, py: Python<'_>, needle: &str, quads: bool) -> PyResult<Vec<Py<PyAny>>> {
+        let mut stpage: *mut fz_stext_page = ptr::null_mut();
+        let rc = unsafe { mupdf_safe_new_stext_page(self.ctx, self.raw, &mut stpage) };
+        if rc != 0 || stpage.is_null() {
+            return Err(PyDocument::last_error_pub());
+        }
+
+        let mut quads_ptr: *mut f32 = ptr::null_mut();
+        let result = (|| -> PyResult<Vec<Py<PyAny>>> {
+            let mut n: c_int = 0;
+            let c_needle = match std::ffi::CString::new(needle) {
+                Ok(s) => s,
+                Err(_) => return Err(PyRuntimeError::new_err("needle contains NUL byte")),
+            };
+            let rc = unsafe {
+                mupdf_safe_search_stext_page(self.ctx, stpage, c_needle.as_ptr(), &mut quads_ptr, &mut n)
+            };
+            if rc != 0 {
+                return Err(PyDocument::last_error_pub());
+            }
+            if n == 0 || quads_ptr.is_null() {
+                return Ok(Vec::new());
+            }
+
+            let total_floats = (n as usize) * 8;
+            let slice = unsafe { std::slice::from_raw_parts(quads_ptr, total_floats) };
+            let mut out = Vec::with_capacity(n as usize);
+            for i in 0..n as usize {
+                let base = i * 8;
+                // fz_quad 内存布局：ul, ur, ll, lr（每点 2 floats）
+                let ul_x = slice[base];
+                let ul_y = slice[base + 1];
+                let ur_x = slice[base + 2];
+                let ur_y = slice[base + 3];
+                let ll_x = slice[base + 4];
+                let ll_y = slice[base + 5];
+                let lr_x = slice[base + 6];
+                let lr_y = slice[base + 7];
+
+                if quads {
+                    // PyMuPDF Quad 顺序：ul→ur→lr→ll（顺时针）
+                    out.push((
+                        ul_x, ul_y, ur_x, ur_y, lr_x, lr_y, ll_x, ll_y,
+                    ).into_pyobject(py)?.into_any().unbind());
+                } else {
+                    // Rect = 包围盒：(min_x, min_y, max_x, max_y)
+                    let x0 = ul_x.min(ll_x);
+                    let y0 = ul_y.min(ur_y);
+                    let x1 = ur_x.max(lr_x);
+                    let y1 = ll_y.max(lr_y);
+                    out.push((x0, y0, x1, y1).into_pyobject(py)?.into_any().unbind());
+                }
+            }
+            Ok(out)
+        })();
+
+        unsafe { mupdf_safe_drop_stext_page(self.ctx, stpage) };
+        unsafe { mupdf_sys::mupdf_free(quads_ptr as *mut _) };
         result
     }
 

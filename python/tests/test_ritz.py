@@ -25,6 +25,8 @@ import ritz
 
 SAMPLE_PDF = Path(__file__).resolve().parents[2] / "crates" / "mupdf" / "tests" / "samples" / "sample.pdf"
 IMAGE_PDF = Path(__file__).resolve().parents[2] / "vendor" / "mupdf" / "thirdparty" / "extract" / "test" / "text_graphic_image.pdf"
+# 带大纲的 PDF（仅 search/toc 测试用，缺失时自动 skip）
+ARXIV_PDF = Path("/Users/xiongzhaolong/Downloads/claude-pro/code_2026/arxiv_2603.09677_translated.pdf")
 
 
 def sample_pdf():
@@ -267,6 +269,149 @@ class TestGetLinks:
     def test_returns_list(self, doc):
         links = doc[0].get_links()
         assert isinstance(links, list)
+
+
+# ----------------------------------------------------------------------------
+# search_for (Phase 5a)
+# ----------------------------------------------------------------------------
+
+class TestSearchFor:
+    def test_basic_search(self, doc):
+        # sample.pdf 文本含 "easy"、"medium"、"hard" 等单词
+        hits = doc[0].search_for("easy")
+        assert isinstance(hits, list)
+        assert len(hits) > 0
+        # 默认 Rect 模式：每条是 4 元组
+        first = hits[0]
+        assert isinstance(first, tuple)
+        assert len(first) == 4
+
+    def test_case_insensitive(self, doc):
+        # MuPDF 搜索默认大小写不敏感
+        upper = doc[0].search_for("EASY")
+        lower = doc[0].search_for("easy")
+        assert len(upper) == len(lower)
+
+    def test_no_hits(self, doc):
+        hits = doc[0].search_for("nonexistent_word_xyz_123")
+        assert hits == []
+
+    def test_quads_mode(self, doc):
+        hits = doc[0].search_for("easy", quads=True)
+        assert len(hits) > 0
+        # quads 模式：每条是 8 元组（ul_x, ul_y, ur_x, ur_y, lr_x, lr_y, ll_x, ll_y）
+        first = hits[0]
+        assert isinstance(first, tuple)
+        assert len(first) == 8
+
+    def test_rect_is_bbox_of_quad(self, doc):
+        """Rect 模式返回值应是 quad 的包围盒。"""
+        rects = doc[0].search_for("easy")
+        quads = doc[0].search_for("easy", quads=True)
+        assert len(rects) == len(quads)
+        for rect, quad in zip(rects, quads):
+            ul_x, ul_y, ur_x, ur_y, lr_x, lr_y, ll_x, ll_y = quad
+            x0 = min(ul_x, ll_x)
+            y0 = min(ul_y, ur_y)
+            x1 = max(ur_x, lr_x)
+            y1 = max(ll_y, lr_y)
+            assert abs(rect[0] - x0) < 0.01
+            assert abs(rect[1] - y0) < 0.01
+            assert abs(rect[2] - x1) < 0.01
+            assert abs(rect[3] - y1) < 0.01
+
+    @pytest.mark.skipif(not ARXIV_PDF.exists(), reason="arxiv fixture missing")
+    def test_cjk_search(self):
+        """CJK 字符搜索（arxiv 翻译版含中文）。"""
+        d = ritz.open(str(ARXIV_PDF))
+        # 找一个肯定在文本中的中文词
+        hits = d[1].search_for("方法")
+        assert len(hits) > 0
+
+    @pytest.mark.skipif(not ARXIV_PDF.exists(), reason="arxiv fixture missing")
+    def test_matches_pymupdf(self):
+        """与 PyMuPDF 结果对照（若装了 fitz）。"""
+        try:
+            import fitz
+        except ImportError:
+            pytest.skip("PyMuPDF not installed")
+        d_ritz = ritz.open(str(ARXIV_PDF))
+        d_fitz = fitz.open(str(ARXIV_PDF))
+        for pno in range(min(5, len(d_ritz))):
+            text = d_ritz[pno].get_text("text")
+            # 从文本里取一个真实出现的英文 token
+            tokens = [w for w in text.replace(".", " ").split() if w.isalpha() and len(w) >= 4]
+            if not tokens:
+                continue
+            needle = tokens[0]
+            r_ritz = d_ritz[pno].search_for(needle)
+            r_fitz = d_fitz[pno].search_for(needle)
+            assert len(r_ritz) == len(r_fitz), (
+                f"p{pno} search {needle!r}: ritz={len(r_ritz)} fitz={len(r_fitz)}"
+            )
+
+
+# ----------------------------------------------------------------------------
+# get_toc (Phase 5a)
+# ----------------------------------------------------------------------------
+
+class TestGetToc:
+    def test_no_outline(self, doc):
+        """sample.pdf 没有大纲，返回 None（与 PyMuPDF 一致）。"""
+        toc = doc.get_toc()
+        assert toc is None
+
+    def test_returns_none_or_list(self, doc):
+        toc = doc.get_toc()
+        assert toc is None or isinstance(toc, list)
+
+    @pytest.mark.skipif(not ARXIV_PDF.exists(), reason="arxiv fixture missing")
+    def test_arxiv_toc(self):
+        d = ritz.open(str(ARXIV_PDF))
+        toc = d.get_toc()
+        assert toc is not None
+        assert isinstance(toc, list)
+        assert len(toc) > 0
+        # 每条是 (level, title, page) 3 元组
+        first = toc[0]
+        assert len(first) == 3
+        level, title, page = first
+        assert isinstance(level, int)
+        assert level >= 1
+        assert isinstance(title, str)
+        assert isinstance(page, int)
+        # 顶层条目 page 应是有效页码（>=1）或是 -1（外链）
+        assert page == -1 or page >= 1
+
+    @pytest.mark.skipif(not ARXIV_PDF.exists(), reason="arxiv fixture missing")
+    def test_levels_are_nested(self):
+        """大纲应含多层级。"""
+        d = ritz.open(str(ARXIV_PDF))
+        toc = d.get_toc()
+        levels = {entry[0] for entry in toc}
+        assert 1 in levels  # 至少有顶层
+        # 多层结构会出现 > 1 的层级
+        assert any(l > 1 for l in levels), f"only level-1 found: {levels}"
+
+    @pytest.mark.skipif(not ARXIV_PDF.exists(), reason="arxiv fixture missing")
+    def test_matches_pymupdf(self):
+        """与 PyMuPDF get_toc(simple=True) 对照。"""
+        try:
+            import fitz
+        except ImportError:
+            pytest.skip("PyMuPDF not installed")
+        d_ritz = ritz.open(str(ARXIV_PDF))
+        d_fitz = fitz.open(str(ARXIV_PDF))
+        r = d_ritz.get_toc()
+        f = d_fitz.get_toc(simple=True)
+        if r is None and f == []:
+            return
+        assert r is not None and f != []
+        assert len(r) == len(f), f"len mismatch: ritz={len(r)} fitz={len(f)}"
+        # 逐条对照（title 可能因编码细微差异，对照 level 和 page）
+        for i, (re, fe) in enumerate(zip(r, f)):
+            assert re[0] == fe[0], f"entry {i} level mismatch: ritz={re[0]} fitz={fe[0]}"
+            assert re[2] == fe[2], f"entry {i} page mismatch: ritz={re[2]} fitz={fe[2]} (title={re[1]!r})"
 
 
 # ----------------------------------------------------------------------------

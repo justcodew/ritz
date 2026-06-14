@@ -4,15 +4,15 @@ use crate::page::PyPage;
 use mupdf_sys::{
     self, fz_context, fz_document,
     mupdf_ext_extract_pages_text, mupdf_safe_authenticate_password, mupdf_safe_count_pages,
-    mupdf_safe_drop_document, mupdf_safe_drop_context, mupdf_safe_load_page,
-    mupdf_safe_lookup_metadata, mupdf_safe_needs_password, mupdf_safe_new_context,
-    mupdf_safe_open_document,
+    mupdf_safe_drop_document, mupdf_safe_drop_context, mupdf_safe_load_outline,
+    mupdf_safe_load_page, mupdf_safe_lookup_metadata, mupdf_safe_needs_password,
+    mupdf_safe_new_context, mupdf_safe_open_document,
 };
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::ffi::CString;
-use std::os::raw::c_int;
+use std::os::raw::{c_char, c_int};
 use std::ptr;
 use std::sync::OnceLock;
 
@@ -168,6 +168,65 @@ impl PyDocument {
         }
         let s = String::from_utf8_lossy(&buf[..end]).into_owned();
         Ok(Some(s))
+    }
+
+    /// get_toc() -> list[[level, title, page]] | None
+    ///
+    /// 返回文档大纲（目录）。PyMuPDF `get_toc(simple=True)` 兼容格式。
+    /// 每条为 `[level, title, page]`：
+    /// - `level`：1-based 层级（顶层 = 1）
+    /// - `title`：UTF-8 字符串
+    /// - `page`：1-based 页码；外部链接或无目标为 -1
+    ///
+    /// 文档无大纲时返回 None（与 PyMuPDF 一致）。
+    fn get_toc(&self, py: Python<'_>) -> PyResult<Option<Vec<Py<PyAny>>>> {
+        let mut ptr: *mut c_char = ptr::null_mut();
+        let mut total_len: usize = 0;
+        let mut n: c_int = 0;
+        let rc = unsafe { mupdf_safe_load_outline(self.ctx, self.raw, &mut ptr, &mut total_len, &mut n) };
+        if rc != 0 {
+            return Err(PyDocument::last_error_pub());
+        }
+        if n == 0 || ptr.is_null() || total_len == 0 {
+            return Ok(None);
+        }
+
+        let result = (|| -> PyResult<Option<Vec<Py<PyAny>>>> {
+            let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, total_len) };
+            let mut out = Vec::with_capacity(n as usize);
+            let mut off = 0usize;
+            for _ in 0..n {
+                if off + 16 > bytes.len() {
+                    return Err(PyRuntimeError::new_err(
+                        "get_toc: buffer underrun reading entry header",
+                    ));
+                }
+                let level = i32::from_ne_bytes(bytes[off..off + 4].try_into().unwrap());
+                let page = i32::from_ne_bytes(bytes[off + 4..off + 8].try_into().unwrap());
+                let _flags = i32::from_ne_bytes(bytes[off + 8..off + 12].try_into().unwrap());
+                let title_len = i32::from_ne_bytes(bytes[off + 12..off + 16].try_into().unwrap()) as usize;
+                off += 16;
+                if off + title_len > bytes.len() {
+                    return Err(PyRuntimeError::new_err(
+                        "get_toc: buffer underrun reading title",
+                    ));
+                }
+                let title = std::str::from_utf8(&bytes[off..off + title_len])
+                    .map_err(|e| PyRuntimeError::new_err(format!("get_toc: title not utf8: {}", e)))?
+                    .to_owned();
+                off += title_len;
+
+                let tuple = (level, title, page)
+                    .into_pyobject(py)?
+                    .into_any()
+                    .unbind();
+                out.push(tuple);
+            }
+            Ok(Some(out))
+        })();
+
+        unsafe { mupdf_sys::mupdf_free(ptr as *mut _) };
+        result
     }
 
     /// load_page(index) -> Page。

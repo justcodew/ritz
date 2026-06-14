@@ -27,11 +27,32 @@
 下一个版本计划（详见 [docx/00-onboarding-guide.md §7.2](docx/00-onboarding-guide.md)）：
 
 - `Fixed`: 修 `get_pixmap` matrix 折叠 bug（静默丢弃 rotation/translate）
-- `Added`: `page.search_for(query)` —— PyMuPDF 兼容文本搜索
-- `Added`: `doc.get_toc()` —— 大纲/书签
 - `Added`: `doc.resolve_names()` —— 命名目标解析
+- `Added`: Phase 5b —— `page.get_annots()` + `add_highlight/underline/strikeout/text` 注释读写
+- `Added`: Phase 5c —— `doc.set_toc()` 大纲写入
 
-发版时机：上述至少一项落地后发 `0.2.0`（包含新 API，minor bump）。
+发版时机：上述至少一项落地后发 `0.3.0`（包含新 API，minor bump）。
+
+---
+
+## [0.2.0] - 2026-06-14
+
+Phase 5a：读路径扩展（文本搜索 + 大纲读取）。底层 C 包装 + Rust 暴露 + PyMuPDF 兼容。
+49 个 pytest 用例全过（含 12 个新增 + 与 PyMuPDF 对照）。
+
+### Added — Phase 5a 读路径 API
+
+- **`page.search_for(needle, quads=False)`** —— PyMuPDF 兼容文本搜索。
+  - 大小写不敏感，复用 stext 基础设施
+  - 默认返回命中位置的包围矩形 `list[(x0,y0,x1,y1)]`
+  - `quads=True` 返回 4 顶点 `list[(ul_x,ul_y,ur_x,ur_y,lr_x,lr_y,ll_x,ll_y)]`
+  - 一次命中跨多行会产生多个 quad/rect，与 PyMuPDF 行为一致
+  - C 层用 `fz_search_stext_page_cb` 回调 API（避免两趟 count+fill）
+- **`doc.get_toc()`** —— PyMuPDF `get_toc(simple=True)` 兼容大纲读取。
+  - 返回 `list[[level, title, page]]`：level 1-based、page 1-based（外链=-1）
+  - 文档无大纲时返回 `None`（与 PyMuPDF 一致）
+  - C 层递归前序遍历 `fz_load_outline` 树 + growbuf 扁平化
+  - 一次 FFI 拿全部 entry，避免 N 次往返
 
 ### Changed
 
@@ -47,6 +68,8 @@
   `plan/03-rennie-data-model.md`（PdfValue enum 灵感来源）。配 `plan/README.md` 索引。
   新维护者从此可追溯"为什么做、做什么、灵感从哪来"，
   与 `docx/`（技术决策）和 `CHANGELOG`（版本账本）构成三层文档体系
+- **`plan_v1 §X.Y` 引用全部转 markdown 链接**：23 处纯文本引用统一改成可点击链接，
+  分布在 README/CHANGELOG/patches/docx/benchmarks/plan 等 12 个文件
 
 ---
 

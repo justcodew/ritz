@@ -1279,6 +1279,138 @@ int mupdf_safe_get_images(fz_context *ctx, fz_document *doc, fz_page *page,
 }
 
 /* ====================================================================
+ * 文本搜索（plan_v1 Phase 5a）
+ * ==================================================================== */
+
+/* 搜索回调：把每个 hit 的所有 quads 追加到 growbuf。
+ * 在 fz_try 内被调用，gb_put 失败时 fz_throw 会被外层 fz_catch 接住。 */
+struct search_collect_state {
+    growbuf gb;
+    int quad_count;
+};
+
+static int search_collect_cb(fz_context *ctx, void *opaque,
+                             int num_quads, fz_quad *hit_bbox) {
+    struct search_collect_state *st = (struct search_collect_state *)opaque;
+    /* fz_quad = 4 fz_point = 8 floats = 32 bytes */
+    gb_put(ctx, &st->gb, hit_bbox, sizeof(fz_quad) * (size_t)num_quads);
+    st->quad_count += num_quads;
+    return 0; /* 0 = 继续搜索 */
+}
+
+int mupdf_safe_search_stext_page(fz_context *ctx, fz_stext_page *stpage,
+                                 const char *needle,
+                                 float **out, int *out_n) {
+    if (!ctx || !stpage || !needle || !out || !out_n) return -1;
+    *out = NULL;
+    *out_n = 0;
+
+    struct search_collect_state st = {0};
+
+    mupdf_clear_error();
+    fz_try(ctx) {
+        int hits = fz_search_stext_page_cb(
+            ctx, stpage, needle, search_collect_cb, &st);
+        (void)hits; /* 我们关心的是 quad 总数，不是 hit 数 */
+    }
+    fz_catch(ctx) {
+        if (st.gb.data) fz_free(ctx, st.gb.data);
+        set_error("search stext page: %s", fz_caught_message(ctx));
+        return -1;
+    }
+
+    if (st.quad_count == 0) {
+        if (st.gb.data) fz_free(ctx, st.gb.data);
+        *out = NULL;
+        *out_n = 0;
+        return 0;
+    }
+
+    *out = (float *)st.gb.data;
+    *out_n = st.quad_count;
+    return 0;
+}
+
+/* ====================================================================
+ * 大纲 / 书签（plan_v1 Phase 5a）
+ * ==================================================================== */
+
+/* 递归前序遍历 outline 树，扁平化到 growbuf。
+ * 在 fz_try 内调用，fz_page_number_from_location / gb_put 失败时 fz_throw
+ * 由外层 fz_catch 接住。 */
+static void walk_outline(fz_context *ctx, fz_document *doc,
+                         fz_outline *node, int level,
+                         growbuf *gb, int *count) {
+    for (; node; node = node->next) {
+        int raw_page = fz_page_number_from_location(ctx, doc, node->page);
+        int py_page = (raw_page >= 0) ? raw_page + 1 : -1;
+        const char *title = node->title ? node->title : "";
+        int title_len = (int)strlen(title);
+        int flags = (int)node->flags;
+        int level_i = level;
+
+        gb_put(ctx, gb, &level_i, sizeof(int));
+        gb_put(ctx, gb, &py_page, sizeof(int));
+        gb_put(ctx, gb, &flags, sizeof(int));
+        gb_put(ctx, gb, &title_len, sizeof(int));
+        if (title_len > 0) {
+            gb_put(ctx, gb, title, (size_t)title_len);
+        }
+        (*count)++;
+
+        if (node->down) {
+            walk_outline(ctx, doc, node->down, level + 1, gb, count);
+        }
+    }
+}
+
+int mupdf_safe_load_outline(fz_context *ctx, fz_document *doc,
+                            char **out, size_t *out_len, int *total_n) {
+    if (!ctx || !doc || !out || !out_len || !total_n) return -1;
+    *out = NULL;
+    *out_len = 0;
+    *total_n = 0;
+
+    fz_outline *root = NULL;
+    growbuf gb = {0};
+    int count = 0;
+    int failed = 0;
+
+    mupdf_clear_error();
+    fz_try(ctx) {
+        root = fz_load_outline(ctx, doc);
+        if (root) {
+            walk_outline(ctx, doc, root, 1, &gb, &count);
+        }
+    }
+    fz_always(ctx) {
+        if (root) fz_drop_outline(ctx, root);
+    }
+    fz_catch(ctx) {
+        failed = 1;
+        set_error("load outline: %s", fz_caught_message(ctx));
+    }
+
+    if (failed) {
+        if (gb.data) fz_free(ctx, gb.data);
+        return -1;
+    }
+
+    if (count == 0) {
+        if (gb.data) fz_free(ctx, gb.data);
+        *out = NULL;
+        *out_len = 0;
+        *total_n = 0;
+        return 0;
+    }
+
+    *out = (char *)gb.data;
+    *out_len = gb.len;
+    *total_n = count;
+    return 0;
+}
+
+/* ====================================================================
  * 内存释放
  * ==================================================================== */
 

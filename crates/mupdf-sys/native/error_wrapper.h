@@ -159,6 +159,34 @@ int mupdf_safe_get_images(fz_context *ctx, fz_document *doc, fz_page *page,
                           int include_data,
                           char **out, size_t *out_len, int *total_n);
 
+/* ---- 文本搜索（plan_v1 Phase 5a） ---- */
+/*
+ * 在 stext_page 上搜索 needle（大小写不敏感）。
+ * 输出 malloc 的 float 数组，每个 quad 8 个 float，顺序与 fz_quad 内存布局
+ * 一致：ul.x, ul.y, ur.x, ur.y, ll.x, ll.y, lr.x, lr.y。
+ * *out_n 写入总 quad 数（一次 hit 可能跨行产生多个 quad）。
+ * 调用方通过 mupdf_free 释放。
+ * 返回 0 成功，-1 失败。
+ */
+int mupdf_safe_search_stext_page(fz_context *ctx, fz_stext_page *stpage,
+                                 const char *needle,
+                                 float **out, int *out_n);
+
+/* ---- 大纲 / 书签（plan_v1 Phase 5a） ---- */
+/*
+ * 加载文档大纲（目录），递归扁平化为 DFS 前序的 buffer。
+ * 每条 entry 布局：
+ *   [level: i32]       // 1-based，顶层=1
+ *   [page: i32]        // 1-based 页码；外部链接或无目标=-1
+ *   [flags: i32]       // bit 0 = bold, bit 1 = italic（与 fz_outline.flags 一致）
+ *   [title_len: i32]
+ *   [title utf8 bytes]
+ * 文档无大纲时 *out=NULL, *total_n=0, 返回 0。
+ * 调用方通过 mupdf_free 释放。
+ */
+int mupdf_safe_load_outline(fz_context *ctx, fz_document *doc,
+                            char **out, size_t *out_len, int *total_n);
+
 /* ---- 内存释放 ---- */
 void mupdf_free(void *ptr);
 
