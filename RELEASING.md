@@ -4,23 +4,33 @@
 
 ## 前置条件（一次性）
 
-### 1. PyPI 账号 + API token
+### 1. PyPI 账号
 
 - 注册 https://pypi.org/account/register/
 - 启用 2FA
-- 账号设置 → API tokens → 生成 scope = "Entire account" 或 "Project: ritz" 的 token
-- token 形如 `pypi-xxxxxxxxxxxxxxxx...`，**只显示一次，立刻保存**
 
-### 2. TestPyPI 账号 + token（用于发版前演练）
+### 2. TestPyPI 账号（用于发版前演练）
 
-- 同样在 https://test.pypi.org
-- token 存到 GitHub repo secret：`TESTPYPI_API_TOKEN`
+- 同样在 https://test.pypi.org 注册并启用 2FA
 
-### 3. 把 token 加到 GitHub repo secrets
+### 3. 配置 OIDC 可信发布（Trusted Publishing）
 
-- repo → Settings → Secrets and variables → Actions → New repository secret
-- 加 `PYPI_API_TOKEN`（正式）和 `TESTPYPI_API_TOKEN`（测试）
-- 加 `environment: pypi` 和 `environment: testpypi`（Settings → Environments）
+本项目用 **PyPI Trusted Publishing（OIDC）**，无需 API token secret。配置步骤：
+
+**PyPI 正式环境**：
+1. https://pypi.org/manage/account/publishing/ → Add a new publisher
+2. Publisher type: **GitHub Actions**
+3. 填三个字段：
+   - PyPI Project Name: `ritz`（首次发版前项目不存在，选 "Reserve new project name"）
+   - Owner: `justcodew`
+   - Repository name: `ritz`
+   - Workflow name: `release.yml`（对应 `.github/workflows/release.yml`）
+   - Environment name: `pypi`（必须与 workflow 里 `environment:` 一致）
+
+**TestPyPI**：同流程在 https://test.pypi.org/manage/account/publishing/，environment 填 `testpypi`。
+
+> 关键不变量：**workflow 文件名 + environment 名 + repo** 三元组必须 PyPI 那边和 workflow 里完全一致，否则 OIDC token 会被拒。
+> 工作流加 `permissions: id-token: write` 让 GitHub 发 OIDC token；不需要 `PYPI_API_TOKEN` secret。
 
 ## 发版流程
 

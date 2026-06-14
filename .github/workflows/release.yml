@@ -63,13 +63,15 @@ jobs:
           path: dist/
 
   # 可选：在 merge 到 test-release 分支时触发 TestPyPI 发布。
-  # 用法见 RELEASING.md。
+  # 用法见 RELEASING.md。使用 OIDC 可信发布，无需 API token secret。
   testpypi:
     name: publish to TestPyPI
     if: github.event_name == 'push' && github.ref == 'refs/heads/test-release'
     needs: build
     runs-on: ubuntu-latest
     environment: testpypi
+    permissions:
+      id-token: write  # OIDC trusted publishing
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -77,7 +79,6 @@ jobs:
           merge-multiple: true
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          password: ${{ secrets.TESTPYPI_API_TOKEN }}
           repository-url: https://test.pypi.org/legacy/
           skip-existing: true
 
@@ -87,11 +88,11 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     environment: pypi
+    permissions:
+      id-token: write  # OIDC trusted publishing
     steps:
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
       - uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
