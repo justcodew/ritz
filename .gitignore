@@ -11,3 +11,6 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+
+# Corpus benchmark download artifacts（几百 MB，不应进仓库）
+benchmarks/corpus/

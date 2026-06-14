@@ -191,7 +191,7 @@ results = ritz.process_documents(paths)
 | 命名空间 | `import ritz` | `import fitz` |
 | 文本搜索 | `page.search_for()` | 同 |
 | 大纲 / TOC | `doc.get_toc()` / `doc.set_toc()` | 同 |
-| PDF 编辑（插入/删除页） | 未实现 | 支持 |
+| PDF 编辑（插入/删除页） | 支持（new_page/delete_page/delete_pages/move_page/copy_page/insert_pdf） | 支持 |
 | PDF 写出 | `doc.save()` | `doc.write()` / `doc.save()` |
 | 注释（annotations） | 读写（highlight/underline/strikeout/text + delete） | 支持 |
 | 命名目标 | `doc.resolve_names()` | — |
@@ -226,11 +226,25 @@ cargo bench -p mupdf
 
 # vs PyMuPDF 对比
 python benchmarks/bench_vs_pymupdf.py
+
+# 公开 corpus 对比（veraPDF + pdf.js + SafeDocs）
+python benchmarks/bench_corpus.py
 ```
 
 报告：
 - [crates/mupdf/benches/REPORT.md](crates/mupdf/benches/REPORT.md) — 微基准
 - [benchmarks/benchmark_report.md](benchmarks/benchmark_report.md) — vs PyMuPDF 对比
+
+### Corpus 对比（2907 PDFs，macOS arm64）
+
+在三个公开 PDF 测试集（veraPDF corpus + Mozilla pdf.js test/pdfs + DARPA SafeDocs）上对比 ritz 与 PyMuPDF 文本提取性能（脚本 `benchmarks/bench_corpus.py`，超时 60s）：
+
+| Library | Mean | p50 | p95 | p99 | Pass Rate | License |
+|---------|------|-----|-----|-----|-----------|---------|
+| ritz | 1.0ms | 0.4ms | 3.3ms | 4.2ms | 100.0% (2907/2907) | AGPL-3.0 |
+| PyMuPDF | 0.6ms | 0.3ms | 2.1ms | 3.3ms | 100.0% (2907/2907) | AGPL-3.0 |
+
+> ritz 和 PyMuPDF 共享 MuPDF 1.27 文本提取引擎，单文档文本提取是双方共享瓶颈场景（详见 [benchmarks/benchmark_report.md](benchmarks/benchmark_report.md) 的 plan_v1 KPI 兑现账本），故接近同量级。ritz 的核心优势在 **批量并行**（单文档 `get_text_batch` 1 次 FFI 拿全部页；多文档 `process_documents` 用 rayon 并行释放 GIL），以及 **链接读取 27x**、**JPEG 图片提取 6.2x** 等 C 层扁平化场景。
 
 ## 测试
 
@@ -258,7 +272,7 @@ pytest python/tests/
 - [x] **阶段 5b**：注释读写（highlight/underline/strikeout/text + delete）
 - [x] **阶段 5c**：大纲写入 `doc.set_toc()`
 - [x] **阶段 5d**：命名目标 `doc.resolve_names()` + 文档保存 `doc.save()`
-- [ ] **阶段 5e**（计划中）：PDF 编辑（插入/删除页）
+- [x] **阶段 5e**：PDF 页面编辑（new_page/delete_page/delete_pages/move_page/copy_page/insert_pdf，PyMuPDF 兼容）
 
 > 每个版本的完整改动记录见 [CHANGELOG.md](CHANGELOG.md)。
 

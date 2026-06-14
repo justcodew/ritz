@@ -1,0 +1,97 @@
+name: release
+
+# tag 推送 v* 时触发：构建多平台 wheel 并发布到 PyPI。
+# 完整流程见 RELEASING.md。
+
+on:
+  push:
+    tags: ['v*']
+
+# 同 tag 重推时取消旧 run
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build wheel (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64（manylinux auto 自动选最新 manylinux 镜像）
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, manylinux: auto }
+          # macOS arm64（Apple Silicon runner）
+          - { os: macos-14,      target: aarch64-apple-darwin,     manylinux: '' }
+          # macOS x86_64（Intel runner）
+          - { os: macos-13,      target: x86_64-apple-darwin,      manylinux: '' }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-${{ matrix.target }}-cargo-
+
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          target: ${{ matrix.target }}
+          args: --release --out dist
+          manylinux: ${{ matrix.manylinux || 'auto' }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.target }}
+          path: dist/
+
+  # 可选：在 merge 到 test-release 分支时触发 TestPyPI 发布。
+  # 用法见 RELEASING.md。
+  testpypi:
+    name: publish to TestPyPI
+    if: github.event_name == 'push' && github.ref == 'refs/heads/test-release'
+    needs: build
+    runs-on: ubuntu-latest
+    environment: testpypi
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.TESTPYPI_API_TOKEN }}
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+
+  publish:
+    name: publish to PyPI
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}

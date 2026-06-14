@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    name: build + test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, python: '3.12' }
+          - { os: macos-14,      python: '3.12' }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config mupdf-tools jq
+
+      - name: Install system deps (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          xcode-select -p || xcode-select --install || true
+          brew install make || true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Install Python test deps
+        run: pip install maturin pytest pymupdf
+
+      - name: Build (maturin develop)
+        run: maturin develop --release
+
+      - name: Python tests
+        run: pytest python/tests/ -q
+
+      - name: Rust integration test
+        run: cargo test -p mupdf --test integration_test

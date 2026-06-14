@@ -11,15 +11,29 @@ license = { text = "AGPL-3.0-only" }
 authors = [{ name = "justcodew" }]
 # 版本从 Cargo.toml [workspace.package] 动态读取（单一来源）
 dynamic = ["version"]
-keywords = ["pdf", "mupdf", "pymupdf"]
+keywords = ["pdf", "mupdf", "pymupdf", "fitz"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: GNU Affero General Public License v3",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Rust",
     "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Text Processing",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
 ]
+
+[project.urls]
+Homepage = "https://github.com/justcodew/ritz"
+Repository = "https://github.com/justcodew/ritz"
+Changelog = "https://github.com/justcodew/ritz/blob/master/CHANGELOG.md"
+Issues = "https://github.com/justcodew/ritz/issues"
 
 [tool.maturin]
 # Python 包名：ritz/；Rust cdylib 输出：_ritz.*
