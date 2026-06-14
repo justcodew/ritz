@@ -140,6 +140,10 @@ results = ritz.process_documents(paths)
 | `doc.is_encrypted` / `doc.needs_password()` | 同 | |
 | `doc.authenticate(pw)` | 同 | |
 | `doc.get_text_batch()` | — | **ritz 独有** |
+| `doc.save(path)` | `doc.save(path)` | |
+| `doc.get_toc()` | `doc.get_toc(simple=True)` | 返回 `list[(level, title, page)]` 或 None |
+| `doc.set_toc(toc)` | `doc.set_toc(toc)` | 接受同 get_toc 格式 |
+| `doc.resolve_names()` | — | 返回 `dict[str, (page, x, y)]` |
 
 ### Page
 
@@ -153,6 +157,10 @@ results = ritz.process_documents(paths)
 | `page.get_links()` | 同 | |
 | `page.get_pixmap(matrix/dpi/alpha)` | 同 | |
 | `page.png(zoom, alpha)` | — | **ritz 独有**：直接返回 PNG bytes |
+| `page.search_for(text)` | `page.search_for(text)` | 返回 quad 列表 |
+| `page.get_annotations()` | `annots = page.annots()` | 返回 `list[dict]`，每条含 type/rect/contents/color/quads |
+| `page.add_highlight_annot(quads, ...)` | `page.add_highlight_annot(quads)` | 类似：underline/strikeout/text |
+| `page.delete_annot(index)` | `annot.delete()` | 按索引删除 |
 
 ### Pixmap
 
@@ -175,11 +183,12 @@ results = ritz.process_documents(paths)
 |------|------|---------|
 | MuPDF 版本 | 1.27.0（git submodule） | 1.27.x wheel |
 | 命名空间 | `import ritz` | `import fitz` |
-| 文本搜索 | 未实现 | `page.search_for()` |
-| 大纲 / TOC | 未实现 | `doc.get_toc()` |
+| 文本搜索 | `page.search_for()` | 同 |
+| 大纲 / TOC | `doc.get_toc()` / `doc.set_toc()` | 同 |
 | PDF 编辑（插入/删除页） | 未实现 | 支持 |
-| PDF 写出 | 未实现 | `doc.write()` / `doc.save()` |
-| 注释（annotations） | 未实现 | 支持 |
+| PDF 写出 | `doc.save()` | `doc.write()` / `doc.save()` |
+| 注释（annotations） | 读写（highlight/underline/strikeout/text + delete） | 支持 |
+| 命名目标 | `doc.resolve_names()` | — |
 | JPEG 编码 | 未实现 | `pix.tobytes("jpeg")` |
 | 多文档并行 | **原生 rayon** | 需 multiprocessing |
 
@@ -239,7 +248,11 @@ pytest python/tests/
 - [x] **plan_v1 KPI 兑现验证**：图片提取原始字节优化（JPEG 6.2x）、安全验证（1000 页 ≤200MB、泄漏 <5KB/iter）、诚实性能账本
 - [x] **plan_v1 缺口补齐**：`get_images` 加 xref（与 PyMuPDF 一致）、`metadata` 改 @property dict、`PdfValue` 暴露给 Python、`process_documents` 多模式（text/html/xhtml/xml/json）、`patches/` 工作流（build.rs 自动应用）、wheel ≤35MB（实测 29MB）
 - [x] **Tier 1+2 实现层优化**：GIL 释放（多文档并行渲染 15.4x）、memoize（metadata/rect/raw_doc）、PNG tobytes 去重复拷贝（1.37x）、words/blocks 单趟 growbuf、PyString fast path。详见 [CHANGELOG.md](CHANGELOG.md) 和 [docx/10-tier1-tier2-results.md](docx/10-tier1-tier2-results.md)
-- [ ] **阶段 5**（计划中）：文本搜索、大纲、PDF 编辑、注释
+- [x] **阶段 5a**：文本搜索 `page.search_for()` + 大纲读取 `doc.get_toc()`
+- [x] **阶段 5b**：注释读写（highlight/underline/strikeout/text + delete）
+- [x] **阶段 5c**：大纲写入 `doc.set_toc()`
+- [x] **阶段 5d**：命名目标 `doc.resolve_names()` + 文档保存 `doc.save()`
+- [ ] **阶段 5e**（计划中）：PDF 编辑（插入/删除页）
 
 > 每个版本的完整改动记录见 [CHANGELOG.md](CHANGELOG.md)。
 
