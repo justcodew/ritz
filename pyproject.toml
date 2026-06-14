@@ -4,12 +4,13 @@ build-backend = "maturin"
 
 [project]
 name = "ritz"
-version = "0.1.0"
 description = "fitz, reforged in Rust — 高性能 PDF 处理库"
 readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "AGPL-3.0-only" }
 authors = [{ name = "justcodew" }]
+# 版本从 Cargo.toml [workspace.package] 动态读取（单一来源）
+dynamic = ["version"]
 keywords = ["pdf", "mupdf", "pymupdf"]
 classifiers = [
     "Development Status :: 3 - Alpha",
