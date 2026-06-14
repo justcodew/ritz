@@ -40,6 +40,14 @@
   pyproject.toml 用 `dynamic = ["version"]` 让 maturin 从 Cargo 读取。**发版改一处即可**。
   详见下方"维护约定"小节
 
+### Documentation
+
+- **新增 `plan/` 目录**：把项目最原始的三篇构想文档收进仓库——
+  `plan/01-plan-v1.md`（愿景与 4 项 KPI）、`plan/02-plan-v2.md`（工程方案）、
+  `plan/03-rennie-data-model.md`（PdfValue enum 灵感来源）。配 `plan/README.md` 索引。
+  新维护者从此可追溯"为什么做、做什么、灵感从哪来"，
+  与 `docx/`（技术决策）和 `CHANGELOG`（版本账本）构成三层文档体系
+
 ---
 
 ## [0.1.0] - 2026-06-14

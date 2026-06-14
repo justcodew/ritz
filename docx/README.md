@@ -37,6 +37,8 @@
 
 ## 相关文件
 
+- **项目起源文档（初衷/范围/灵感）**：[../plan/](../plan/) ⭐ 想了解"为什么做这个项目"先看这里
 - 性能基准报告：[../benchmarks/benchmark_report.md](../benchmarks/benchmark_report.md)
+- 版本发布账本：[../CHANGELOG.md](../CHANGELOG.md)
 - 用户文档（README）：[../README.md](../README.md)
 - 交互演示：[../docs/demo.ipynb](../docs/demo.ipynb)

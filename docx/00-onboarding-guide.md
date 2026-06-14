@@ -16,7 +16,10 @@
 
 一句话总结：**MuPDF 是引擎，Rust 是骨架，Python 是脸**。
 
-> **要看每个版本做了什么改动**：读根目录 [CHANGELOG.md](../CHANGELOG.md)。本文档教你怎么"接手"，CHANGELOG 教你"项目到哪了"。
+> **三层文档**：
+> - 想"了解项目初衷和 KPI" → 读 [../plan/](../plan/)（plan_v1 立项 + plan_v2 工程方案 + Rennie 灵感来源）
+> - 想"看每个版本做了什么" → 读根目录 [CHANGELOG.md](../CHANGELOG.md)
+> - 想"接手项目" → 读完本文 + §1 推荐的 docx/
 
 ## 1. 理解项目（必读 docx/ 顺序）
 
@@ -121,6 +124,7 @@ ritz/
 ├── Cargo.toml                   # ⭐ workspace 根（版本号单一来源，[workspace.package].version）
 ├── README.md                    # 用户文档（API 速查）
 ├── CHANGELOG.md                 # 版本变更记录
+├── plan/                        # ⭐ 项目起源（plan_v1 愿景 + plan_v2 工程方案 + Rennie 灵感）
 ├── docx/                        # 技术决策文档（本文所在）
 ├── patches/                     # MuPDF 补丁（build.rs 自动应用）
 │   └── README.md                # 补丁工作流
