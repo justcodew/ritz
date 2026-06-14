@@ -23,6 +23,7 @@
 | [12-phase5b-annotations.md](12-phase5b-annotations.md) | Phase 5b 注释读写 | 注释创建/读取/删除 + refcount 陷阱 + QuadPoints 包围盒 |
 | [13-phase5c-outline-writing.md](13-phase5c-outline-writing.md) | Phase 5c 大纲写入 | doc.set_toc() + doc.save() + iterator 设计缺陷分析 |
 | [14-phase5d-resolve-names.md](14-phase5d-resolve-names.md) | Phase 5d 命名目标 | doc.resolve_names() + pdf_resolve_link_dest 方案 |
+| [15-phase5e-page-editing.md](15-phase5e-page-editing.md) | Phase 5e 页面编辑 | new_page/delete_page/move_page/copy_page/insert_pdf + refcount 陷阱 |
 
 ## 快速导航
 
@@ -42,6 +43,7 @@
 - 注释读写怎么实现的，有哪些坑 → [12-phase5b-annotations](12-phase5b-annotations.md)
 - set_toc 为什么不用 iterator → [13-phase5c-outline-writing](13-phase5c-outline-writing.md)
 - resolve_names 怎么解析命名目标 → [14-phase5d-resolve-names](14-phase5d-resolve-names.md)
+- 页面编辑（插入/删除/移动/复制/合并 PDF）怎么实现 → [15-phase5e-page-editing](15-phase5e-page-editing.md)
 
 ## 相关文件
 

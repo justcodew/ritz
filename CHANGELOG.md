@@ -27,11 +27,43 @@
 下一个版本计划（详见 [docx/00-onboarding-guide.md §7.2](docx/00-onboarding-guide.md)）：
 
 - `Fixed`: 修 `get_pixmap` matrix 折叠 bug（静默丢弃 rotation/translate）
-- `Added`: `doc.resolve_names()` —— 命名目标解析
-- `Added`: Phase 5b —— `page.get_annots()` + `add_highlight/underline/strikeout/text` 注释读写
-- `Added`: Phase 5c —— `doc.set_toc()` 大纲写入
 
-发版时机：上述至少一项落地后发 `0.3.0`（包含新 API，minor bump）。
+发版时机：上述落地后发 `0.3.1`。
+
+---
+
+## [0.3.0] - 2026-06-14
+
+Phase 5e：PDF 页面编辑（plan_v1 最后一个 KPI）。落地后 plan_v1 全部 KPI 达成。
+75 个 pytest 用例全过（含 13 个新增页面编辑用例）。
+
+### Added — Phase 5e 页面编辑 API
+
+- **`doc.new_page(pno=-1, width=595, height=842, rotate=0) -> Page`** —— PyMuPDF 兼容。
+  插入空白页，返回新建 Page 对象。C 层 `pdf_add_page` + `pdf_insert_page`，正确处理 refcount
+  （详见 [docx/15-phase5e-page-editing.md](docx/15-phase5e-page-editing.md)）。
+- **`doc.delete_page(pno=-1)`** —— 删除单页，-1 表示末页。
+- **`doc.delete_pages(from_page=-1, to_page=-1)`** —— 删除闭区间 [from, to]，-1 表示边界。
+  内部转 MuPDF 半开区间 `[start, end+1)`。
+- **`doc.move_page(src, dst)`** —— 移动页位置。用 `pdf_keep_obj` 保命 + `pdf_drop_obj` 释放。
+- **`doc.copy_page(src, dst)`** —— 同文档克隆，用 `pdf_graft_page`。
+- **`doc.insert_pdf(docsrc, start=0, end=-1, at=-1)`** —— 把 docsrc 的 [start, end) 页插入到当前文档。
+  **关键**：内部用 docsrc 的 filename 在当前 doc 的 fz_context 里重开 src，
+  避免 MuPDF 跨 ctx `pdf_graft_page` 的 UB。为此 `PyDocument` 新增 `filename: String` 字段。
+
+### Changed
+
+- `PyDocument` 新增 `pub(crate) filename: String` 字段，`new()` 时记录源路径，供 `insert_pdf` 复用。
+
+### Documentation
+
+- 新增 [docx/15-phase5e-page-editing.md](docx/15-phase5e-page-editing.md) —— 6 个 API 实现 + refcount 陷阱 + 跨 ctx insert_pdf 方案 + 4 个踩坑记录
+
+### 踩坑记录
+
+- `fz_try/fz_always/fz_catch` 必须同级（嵌套写法导致第二次 new_page SIGSEGV）
+- `move_page` 的 dst 不需要调整（pdf_insert_page 的 at 是相对新页树）
+- `pdf_graft_page` 要求 src/dst 共享 ctx（ritz 每个 doc 独立 ctx，必须重开 src）
 
 ---
 

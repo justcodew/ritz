@@ -144,6 +144,12 @@ results = ritz.process_documents(paths)
 | `doc.get_toc()` | `doc.get_toc(simple=True)` | 返回 `list[(level, title, page)]` 或 None |
 | `doc.set_toc(toc)` | `doc.set_toc(toc)` | 接受同 get_toc 格式 |
 | `doc.resolve_names()` | — | 返回 `dict[str, (page, x, y)]` |
+| `doc.new_page(pno=-1, width=595, height=842, rotate=0)` | `doc.new_page(...)` | 插入空白页，返回 Page |
+| `doc.delete_page(pno=-1)` | `doc.delete_page(pno)` | -1 = 末页 |
+| `doc.delete_pages(from_page=-1, to_page=-1)` | `doc.delete_pages(from, to)` | 闭区间 |
+| `doc.move_page(src, dst)` | `doc.move_page(src, dst)` | |
+| `doc.copy_page(src, dst)` | `doc.copy_page(src, dst)` | 同文档克隆 |
+| `doc.insert_pdf(docsrc, start=0, end=-1, at=-1)` | `doc.insert_pdf(docsrc, ...)` | 内部重开 src 以共享 ctx |
 
 ### Page
 
