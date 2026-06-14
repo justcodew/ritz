@@ -37527,6 +37527,57 @@ extern "C" {
     ) -> ::std::os::raw::c_int;
 }
 extern "C" {
+    pub fn mupdf_safe_new_blank_page(
+        ctx: *mut fz_context,
+        doc: *mut fz_document,
+        at: ::std::os::raw::c_int,
+        width: f32,
+        height: f32,
+        rotate: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn mupdf_safe_delete_page(
+        ctx: *mut fz_context,
+        doc: *mut fz_document,
+        number: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn mupdf_safe_delete_page_range(
+        ctx: *mut fz_context,
+        doc: *mut fz_document,
+        start: ::std::os::raw::c_int,
+        end: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn mupdf_safe_move_page(
+        ctx: *mut fz_context,
+        doc: *mut fz_document,
+        src: ::std::os::raw::c_int,
+        dst: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn mupdf_safe_copy_page(
+        ctx: *mut fz_context,
+        doc: *mut fz_document,
+        dst: ::std::os::raw::c_int,
+        src: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn mupdf_safe_insert_pdf(
+        ctx: *mut fz_context,
+        dst_doc: *mut fz_document,
+        at: ::std::os::raw::c_int,
+        src_path: *const ::std::os::raw::c_char,
+        start: ::std::os::raw::c_int,
+        end: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
     pub fn mupdf_free(ptr: *mut ::std::os::raw::c_void);
 }
 extern "C" {

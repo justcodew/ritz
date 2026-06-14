@@ -227,6 +227,39 @@ int mupdf_safe_set_toc(fz_context *ctx, fz_document *doc,
 int mupdf_safe_resolve_names(fz_context *ctx, fz_document *doc,
                              char **out, size_t *out_len, int *total_n);
 
+/* ---- 页面编辑（Phase 5e） ---- */
+/*
+ * 在位置 at 插入一张空白页。at = -1/INT_MAX 追加。
+ * mediabox = (0, 0, width, height)；rotate ∈ {0,90,180,270}。
+ * 返回 0 成功，-1 失败。
+ */
+int mupdf_safe_new_blank_page(fz_context *ctx, fz_document *doc,
+                              int at, float width, float height, int rotate);
+/*
+ * 删除单页。number 0-based，-1 表示最后一页。越界返回 -1。
+ */
+int mupdf_safe_delete_page(fz_context *ctx, fz_document *doc, int number);
+/*
+ * 删除 [start, end) 半开区间（MuPDF 原生语义）。
+ * start = -1 → 0；end < 0 → 末尾。
+ */
+int mupdf_safe_delete_page_range(fz_context *ctx, fz_document *doc, int start, int end);
+/*
+ * 把 src 位置的页移动到 dst 位置（0-based）。
+ */
+int mupdf_safe_move_page(fz_context *ctx, fz_document *doc, int src, int dst);
+/*
+ * 在 dst 位置克隆 src 页（同文档内）。
+ */
+int mupdf_safe_copy_page(fz_context *ctx, fz_document *doc, int dst, int src);
+/*
+ * 把 src_path 指定 PDF 的 [start, end) 页复制插入到 dst_doc 的 at 位置。
+ * at = -1 追加；start/end = -1 取默认（0 / src 末尾）。
+ * 内部在 dst 的 ctx 内重开 src，避免跨 ctx UB。
+ */
+int mupdf_safe_insert_pdf(fz_context *ctx, fz_document *dst_doc, int at,
+                          const char *src_path, int start, int end);
+
 /* ---- 内存释放 ---- */
 void mupdf_free(void *ptr);
 

@@ -11,7 +11,7 @@ name = "_ritz"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-mupdf = { path = "../mupdf", version = "0.2.0" }
-mupdf-sys = { path = "../mupdf-sys", version = "0.2.0" }
+mupdf = { path = "../mupdf", version = "0.3.0" }
+mupdf-sys = { path = "../mupdf-sys", version = "0.3.0" }
 pyo3 = { version = "0.29", features = ["extension-module"] }
 rayon = "1.10"

@@ -720,3 +720,164 @@ class TestResolveNames:
         d2 = ritz.open(str(out))
         result = d2.resolve_names()
         assert isinstance(result, dict)
+
+
+# ----------------------------------------------------------------------------
+# 页面编辑 (Phase 5e)
+# ----------------------------------------------------------------------------
+
+class TestPageEditing:
+    """doc.new_page / delete_page / delete_pages / move_page / copy_page / insert_pdf 测试。
+
+    PyMuPDF 兼容语义。每个测试自己 open 一份新 doc（写操作不能共享 module 级 fixture）。
+    """
+
+    def test_new_page_append(self):
+        """末尾追加空白页，页数 +1，新页文本为空。"""
+        d = ritz.open(sample_pdf())
+        n_before = len(d)
+        d.new_page()
+        assert len(d) == n_before + 1
+        # 新页文本应为空
+        text = d[n_before].get_text("text")
+        assert text.strip() == ""
+
+    def test_new_page_at_position(self):
+        """在 index 0 插入空白页，新页落在第一页位置。"""
+        d = ritz.open(sample_pdf())
+        n_before = len(d)
+        # 记录原第 0 页的前若干字符
+        original_first = d[0].get_text("text")[:10]
+        d.new_page(pno=0)
+        assert len(d) == n_before + 1
+        # 新第 0 页应为空白
+        assert d[0].get_text("text").strip() == ""
+        # 原第 0 页内容应现在位于第 1 页
+        assert d[1].get_text("text")[:10] == original_first
+
+    def test_new_page_custom_size(self):
+        """自定义 width/height/rotate。"""
+        d = ritz.open(sample_pdf())
+        d.new_page(width=200.0, height=300.0, rotate=90)
+        n = len(d)
+        page = d[n - 1]
+        # mediabox 应反映 200x300（带 rotate=90 时 MuPDF 可能交换两轴，所以允许两种顺序）
+        mb = page.mediabox
+        dims = sorted([mb[2], mb[3]])
+        assert abs(dims[0] - 200.0) < 1.0
+        assert abs(dims[1] - 300.0) < 1.0
+        assert page.rotation in (90, 90.0)
+
+    def test_new_page_returns_page_object(self):
+        """new_page 返回 PyPage 对象，可立即读属性。"""
+        d = ritz.open(sample_pdf())
+        page = d.new_page()
+        assert page is not None
+        # 拥有 Page 的方法
+        assert hasattr(page, "get_text")
+        assert hasattr(page, "rect")
+        assert page.get_text("text").strip() == ""
+
+    def test_delete_page(self):
+        """删除单页，页数 -1。"""
+        d = ritz.open(sample_pdf())
+        n_before = len(d)
+        d.delete_page(0)
+        assert len(d) == n_before - 1
+
+    def test_delete_page_last(self):
+        """pno=-1 删除末页。"""
+        d = ritz.open(sample_pdf())
+        n_before = len(d)
+        d.delete_page(-1)
+        assert len(d) == n_before - 1
+
+    def test_delete_pages_range(self):
+        """delete_pages(0, 1) 删除前两页（闭区间）。"""
+        d = ritz.open(sample_pdf())
+        # sample.pdf 只有 1 页，先追加几张空白页凑到 ≥3 页
+        while len(d) < 3:
+            d.new_page()
+        n_before = len(d)
+        d.delete_pages(0, 1)
+        assert len(d) == n_before - 2
+
+    def test_move_page(self):
+        """move_page(0, n-1) 把第 0 页移到末尾（PyMuPDF 兼容语义）。
+
+        PyMuPDF move_page(src, dst)：dst 是相对原页树的位置。
+        [A, B, C, D].move(0, 3) → [B, C, A, D]（A 插到原 dst=3 之前）。
+        """
+        d = ritz.open(sample_pdf())
+        while len(d) < 2:
+            d.new_page()
+        n = len(d)
+        first_text = d[0].get_text("text")[:20]
+        second_text = d[1].get_text("text")[:20]
+        # move(0, n-1): 把第 0 页移到末尾（dst 是原位置 n-1，删 0 后插到 n-2）
+        d.move_page(0, n - 1)
+        assert len(d) == n  # 移动不改变页数
+        # PyMuPDF 语义：原 first 应在 index n-2（插到原 dst=n-1 之前）
+        # 但 n=2 时特殊：move(0,1) → 删 0 → [B]，插到 0 → [A,B]（无变化）
+        if n == 2:
+            # 邻接 case：move(0, 1) 等同于无操作
+            assert d[0].get_text("text")[:20] == first_text
+            assert d[1].get_text("text")[:20] == second_text
+        else:
+            # 一般 case：first 落在 n-2 位置
+            assert d[n - 2].get_text("text")[:20] == first_text
+
+    def test_copy_page(self):
+        """复制第 0 页到末尾。"""
+        d = ritz.open(sample_pdf())
+        n_before = len(d)
+        first_text = d[0].get_text("text")[:20]
+        d.copy_page(0, -1)
+        assert len(d) == n_before + 1
+        # 末页内容应与原首页相同
+        assert d[n_before].get_text("text")[:20] == first_text
+        # 原首页内容不变
+        assert d[0].get_text("text")[:20] == first_text
+
+    def test_insert_pdf_basic(self):
+        """把另一份 PDF 全部页插入到当前文档末尾。"""
+        d = ritz.open(sample_pdf())
+        src = ritz.open(sample_pdf())
+        n_before = len(d)
+        d.insert_pdf(src)
+        assert len(d) == n_before * 2
+
+    def test_insert_pdf_partial(self):
+        """insert_pdf 用 start/end 范围插入。"""
+        d = ritz.open(sample_pdf())
+        # 先构造一份 ≥2 页的源 PDF（保存到 tmp）
+        src_doc = ritz.open(sample_pdf())
+        src_doc.new_page()  # 现在 src 有 2 页
+        tmp_src = "/tmp/_ritz_insert_pdf_partial_src.pdf"
+        src_doc.save(tmp_src)
+        src = ritz.open(tmp_src)
+        n_before = len(d)
+        # 只插入 src 第 0..1 页（半开区间 [0, 2)）
+        d.insert_pdf(src, start=0, end=2)
+        assert len(d) == n_before + 2
+
+    def test_invalid_index_raises(self):
+        """越界索引抛 PyRuntimeError。"""
+        from ritz import Document  # noqa: F401  仅为静态分析
+        d = ritz.open(sample_pdf())
+        n = len(d)
+        with pytest.raises(RuntimeError):
+            d.delete_page(n)  # 越界
+
+    def test_survives_save(self, tmp_path):
+        """综合：插入+删除 → save → reopen 状态保留。"""
+        d = ritz.open(sample_pdf())
+        n0 = len(d)
+        d.new_page()              # +1
+        d.delete_page(0)          # -1
+        assert len(d) == n0
+        out = tmp_path / "edit.pdf"
+        d.save(str(out))
+        d2 = ritz.open(str(out))
+        assert len(d2) == n0
+

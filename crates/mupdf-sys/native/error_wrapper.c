@@ -1894,6 +1894,237 @@ int mupdf_safe_resolve_names(fz_context *ctx, fz_document *doc,
 }
 
 /* ====================================================================
+ * 页面编辑（Phase 5e）
+ * ==================================================================== */
+
+/*
+ * 在位置 at 插入一张空白页（mediabox = (0,0,width,height)，rotate 取 0/90/180/270）。
+ * at = -1 或 INT_MAX 表示追加到末尾。
+ * 返回 0 成功，-1 失败。
+ *
+ * refcount 要点：pdf_add_page 返回 refcount=1，pdf_insert_page 会再 keep 一次。
+ * 因此 fz_always 必须 drop 一次，否则泄漏。参考 vendor/mupdf/source/tools/murun.c:8028。
+ */
+int mupdf_safe_new_blank_page(fz_context *ctx, fz_document *doc,
+                              int at, float width, float height, int rotate) {
+    if (!ctx || !doc) return -1;
+    if (width <= 0 || height <= 0) {
+        set_error("new blank page: invalid mediabox %.2f x %.2f", width, height);
+        return -1;
+    }
+
+    mupdf_clear_error();
+    pdf_obj *page = NULL;
+    fz_try(ctx) {
+        pdf_document *pdf = pdf_document_from_fz_document(ctx, doc);
+        if (!pdf) fz_throw(ctx, FZ_ERROR_GENERIC, "not a pdf document");
+
+        fz_rect mediabox = fz_make_rect(0, 0, width, height);
+        page = pdf_add_page(ctx, pdf, mediabox, rotate, NULL, NULL);
+        if (!page) fz_throw(ctx, FZ_ERROR_GENERIC, "pdf_add_page returned NULL");
+
+        int count = pdf_count_pages(ctx, pdf);
+        int insert_at = (at < 0 || at >= count) ? count : at;
+        pdf_insert_page(ctx, pdf, insert_at, page);
+    }
+    fz_always(ctx) {
+        if (page) pdf_drop_obj(ctx, page);
+    }
+    fz_catch(ctx) {
+        set_error("new blank page: %s", fz_caught_message(ctx));
+        return -1;
+    }
+    return 0;
+}
+
+/*
+ * 删除单页。number 0-based，-1 表示最后一页。
+ * 返回 0 成功，-1 失败（含越界）。
+ */
+int mupdf_safe_delete_page(fz_context *ctx, fz_document *doc, int number) {
+    if (!ctx || !doc) return -1;
+
+    mupdf_clear_error();
+    fz_try(ctx) {
+        pdf_document *pdf = pdf_document_from_fz_document(ctx, doc);
+        if (!pdf) fz_throw(ctx, FZ_ERROR_GENERIC, "not a pdf document");
+
+        int count = pdf_count_pages(ctx, pdf);
+        int num = (number < 0) ? count - 1 : number;
+        if (num < 0 || num >= count) {
+            fz_throw(ctx, FZ_ERROR_GENERIC,
+                "page number %d out of range (0..%d)", num, count - 1);
+        }
+        pdf_delete_page(ctx, pdf, num);
+    }
+    fz_catch(ctx) {
+        set_error("delete page: %s", fz_caught_message(ctx));
+        return -1;
+    }
+    return 0;
+}
+
+/*
+ * 删除 [start, end) 半开区间内的页（MuPDF 原生语义）。
+ * start = -1 → 0；end < 0 → count。
+ * 返回 0 成功，-1 失败。
+ */
+int mupdf_safe_delete_page_range(fz_context *ctx, fz_document *doc, int start, int end) {
+    if (!ctx || !doc) return -1;
+
+    mupdf_clear_error();
+    fz_try(ctx) {
+        pdf_document *pdf = pdf_document_from_fz_document(ctx, doc);
+        if (!pdf) fz_throw(ctx, FZ_ERROR_GENERIC, "not a pdf document");
+
+        int count = pdf_count_pages(ctx, pdf);
+        int s = (start < 0) ? 0 : start;
+        int e = (end < 0) ? count : end;
+        if (s < 0 || s >= count || e <= s) {
+            fz_throw(ctx, FZ_ERROR_GENERIC,
+                "invalid page range [%d, %d) with count %d", s, e, count);
+        }
+        if (e > count) e = count;
+        pdf_delete_page_range(ctx, pdf, s, e);
+    }
+    fz_catch(ctx) {
+        set_error("delete page range: %s", fz_caught_message(ctx));
+        return -1;
+    }
+    return 0;
+}
+
+/*
+ * 把 src 位置的页移动到 dst 位置（0-based）。
+ * 实现：lookup_page_obj → keep（保命）→ delete → 调整 dst → insert → drop。
+ * 若 dst > src，删掉 src 后 dst 后移一位，所以 dst -= 1。
+ * 返回 0 成功，-1 失败。
+ */
+int mupdf_safe_move_page(fz_context *ctx, fz_document *doc, int src, int dst) {
+    if (!ctx || !doc) return -1;
+    pdf_obj *page = NULL;
+
+    mupdf_clear_error();
+    fz_try(ctx) {
+        pdf_document *pdf = pdf_document_from_fz_document(ctx, doc);
+        if (!pdf) fz_throw(ctx, FZ_ERROR_GENERIC, "not a pdf document");
+
+        int count = pdf_count_pages(ctx, pdf);
+        if (src < 0 || src >= count) {
+            fz_throw(ctx, FZ_ERROR_GENERIC,
+                "src page %d out of range (0..%d)", src, count - 1);
+        }
+        if (dst < 0) dst = count - 1;
+        if (dst >= count) dst = count - 1;
+
+        page = pdf_lookup_page_obj(ctx, pdf, src);
+        if (!page) fz_throw(ctx, FZ_ERROR_GENERIC, "lookup_page_obj returned NULL");
+        pdf_keep_obj(ctx, page);   /* 自己持有一份，delete 后不会被释放 */
+
+        pdf_delete_page(ctx, pdf, src);
+
+        /*
+         * PyMuPDF move_page 语义：dst 是相对**原**页树的位置。
+         * 删除 src 后，原 dst > src 的位置现在索引为 dst-1。
+         * - move(0, 2) on [A,B,C,D] → 删 A → [B,C,D] → 插到 1 → [B,A,C,D] ✓
+         * - move(0, 1) 邻接 → 删 A → [B,C,D] → 插到 0 → [A,B,C,D] ✓（无变化）
+         * - move(3, 0) → 删 D → [A,B,C] → 插到 0 → [D,A,B,C] ✓
+         */
+        int insert_at = (dst > src) ? dst - 1 : dst;
+        pdf_insert_page(ctx, pdf, insert_at, page);
+    }
+    fz_always(ctx) {
+        if (page) pdf_drop_obj(ctx, page);
+    }
+    fz_catch(ctx) {
+        set_error("move page: %s", fz_caught_message(ctx));
+        return -1;
+    }
+    return 0;
+}
+
+/*
+ * 在 dst 位置克隆 src 页（src/dst 都在当前文档内）。
+ * 用 pdf_graft_page(src=dst=当前文档) 让 MuPDF 处理克隆。
+ * 返回 0 成功，-1 失败。
+ */
+int mupdf_safe_copy_page(fz_context *ctx, fz_document *doc, int dst, int src) {
+    if (!ctx || !doc) return -1;
+
+    mupdf_clear_error();
+    fz_try(ctx) {
+        pdf_document *pdf = pdf_document_from_fz_document(ctx, doc);
+        if (!pdf) fz_throw(ctx, FZ_ERROR_GENERIC, "not a pdf document");
+
+        int count = pdf_count_pages(ctx, pdf);
+        if (src < 0 || src >= count) {
+            fz_throw(ctx, FZ_ERROR_GENERIC,
+                "src page %d out of range (0..%d)", src, count - 1);
+        }
+        int insert_at = (dst < 0 || dst >= count) ? count : dst;
+        pdf_graft_page(ctx, pdf, insert_at, pdf, src);
+    }
+    fz_catch(ctx) {
+        set_error("copy page: %s", fz_caught_message(ctx));
+        return -1;
+    }
+    return 0;
+}
+
+/*
+ * 把 src_path 指定 PDF 的 [start, end) 页（0-based 半开区间）复制插入到 dst_doc 的 at 位置。
+ * 关键：src 在 dst 的 ctx 内重新打开，避免跨 ctx graft 导致的 UB。
+ * start/end 为 -1 时取默认（0 / src 总页数）；at = -1 表示追加到 dst 末尾。
+ * 返回 0 成功，-1 失败。
+ */
+int mupdf_safe_insert_pdf(fz_context *ctx, fz_document *dst_doc, int at,
+                          const char *src_path, int start, int end) {
+    if (!ctx || !dst_doc || !src_path) return -1;
+
+    fz_document *src_doc = NULL;
+    mupdf_clear_error();
+    fz_try(ctx) {
+        pdf_document *dst = pdf_document_from_fz_document(ctx, dst_doc);
+        if (!dst) fz_throw(ctx, FZ_ERROR_GENERIC, "not a pdf document");
+
+        /* 在 dst 的 ctx 内打开 src，确保后续 pdf_graft_page 走同 ctx */
+        src_doc = fz_open_document(ctx, src_path);
+        if (!src_doc) fz_throw(ctx, FZ_ERROR_GENERIC, "fz_open_document returned NULL");
+        pdf_document *src = pdf_document_from_fz_document(ctx, src_doc);
+        if (!src) {
+            fz_drop_document(ctx, src_doc);
+            src_doc = NULL;
+            fz_throw(ctx, FZ_ERROR_GENERIC, "source is not a pdf document");
+        }
+
+        int src_count = pdf_count_pages(ctx, src);
+        int dst_count = pdf_count_pages(ctx, dst);
+
+        int s = (start < 0) ? 0 : start;
+        int e = (end < 0) ? src_count : end;
+        if (s < 0 || s >= src_count || e <= s) {
+            fz_throw(ctx, FZ_ERROR_GENERIC,
+                "invalid source page range [%d, %d) with src count %d", s, e, src_count);
+        }
+        if (e > src_count) e = src_count;
+
+        int insert_at = (at < 0 || at >= dst_count) ? dst_count : at;
+        for (int i = s; i < e; i++) {
+            pdf_graft_page(ctx, dst, insert_at, src, i);
+            insert_at++;
+        }
+    }
+    fz_always(ctx) {
+        if (src_doc) fz_drop_document(ctx, src_doc);
+    }
+    fz_catch(ctx) {
+        set_error("insert pdf: %s", fz_caught_message(ctx));
+        return -1;
+    }
+    return 0;
+}
+
+/* ====================================================================
  * 内存释放
  * ==================================================================== */
 

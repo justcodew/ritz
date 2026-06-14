@@ -4,8 +4,10 @@ use crate::page::PyPage;
 use mupdf_sys::{
     self, fz_context, fz_document,
     mupdf_ext_extract_pages_text, mupdf_safe_authenticate_password, mupdf_safe_count_pages,
-    mupdf_safe_drop_document, mupdf_safe_drop_context, mupdf_safe_load_outline,
-    mupdf_safe_load_page, mupdf_safe_lookup_metadata, mupdf_safe_needs_password,
+    mupdf_safe_copy_page, mupdf_safe_delete_page, mupdf_safe_delete_page_range,
+    mupdf_safe_drop_document, mupdf_safe_drop_context, mupdf_safe_insert_pdf,
+    mupdf_safe_load_outline, mupdf_safe_load_page, mupdf_safe_lookup_metadata,
+    mupdf_safe_move_page, mupdf_safe_needs_password, mupdf_safe_new_blank_page,
     mupdf_safe_new_context, mupdf_safe_open_document, mupdf_safe_resolve_names,
     mupdf_safe_save_document, mupdf_safe_set_toc,
 };
@@ -26,6 +28,8 @@ pub struct PyDocument {
     /// 原始 ctx 指针。Drop 顺序：doc 先 drop，再 drop ctx。
     pub(crate) ctx: *mut fz_context,
     pub(crate) raw: *mut fz_document,
+    /// 源文件路径。用于 insert_pdf 跨 ctx 复用（在 dst 的 ctx 里重新打开）。
+    pub(crate) filename: String,
     metadata_cache: OnceLock<Py<PyAny>>,
 }
 
@@ -62,7 +66,14 @@ impl PyDocument {
             return Err(Self::last_error_pub());
         }
 
-        Ok(PyDocument { ctx, raw, metadata_cache: OnceLock::new() })
+        Ok(PyDocument { ctx, raw, filename: filename.to_string(), metadata_cache: OnceLock::new() })
+    }
+
+    /// 源文件路径（只读属性）。
+    /// insert_pdf 会用此路径在目标文档的 ctx 内重开源 PDF，避免跨 ctx UB。
+    #[getter]
+    fn filename(&self) -> String {
+        self.filename.clone()
     }
 
     /// 页数。
@@ -333,6 +344,137 @@ impl PyDocument {
 
         unsafe { mupdf_sys::mupdf_free(ptr as *mut _) };
         result
+    }
+
+    /// new_page(pno=-1, width=595, height=842, rotate=0) -> Page
+    ///
+    /// 插入一张空白页并返回新建的 Page 对象（PyMuPDF 兼容）。
+    /// - pno：插入位置（0-based）；-1 表示末尾追加
+    /// - width/height：页面尺寸（PDF 用户空间单位，默认 A4）
+    /// - rotate：0/90/180/270
+    ///
+    /// 注意：返回的 Page 对象在后续 insert/delete/move/copy 操作后**位置可能失效**。
+    /// 建议先做所有页面编辑，最后再 load_page 取页读取。
+    #[pyo3(signature = (pno=-1, width=595.0, height=842.0, rotate=0))]
+    fn new_page(
+        slf: &Bound<'_, Self>,
+        pno: i32,
+        width: f32,
+        height: f32,
+        rotate: i32,
+    ) -> PyResult<Py<PyPage>> {
+        {
+            let inner = slf.borrow();
+            let rc = unsafe {
+                mupdf_safe_new_blank_page(inner.ctx, inner.raw, pno as c_int, width, height, rotate as c_int)
+            };
+            if rc != 0 {
+                return Err(Self::last_error_pub());
+            }
+        }
+        // 计算新页落在的位置：合法 pno 落在 pno，否则追加到末尾（len-1）
+        let n = {
+            let inner = slf.borrow();
+            unsafe { mupdf_safe_count_pages(inner.ctx, inner.raw) }
+        };
+        if n < 0 {
+            return Err(Self::last_error_pub());
+        }
+        let target = if pno < 0 || pno >= n { (n - 1) as usize } else { pno as usize };
+        Self::load_page(slf, target)
+    }
+
+    /// delete_page(pno=-1) -> None
+    ///
+    /// 删除指定页（0-based）。pno=-1 删除最后一页。
+    fn delete_page(&self, pno: i32) -> PyResult<()> {
+        let rc = unsafe { mupdf_safe_delete_page(self.ctx, self.raw, pno as c_int) };
+        if rc != 0 {
+            return Err(Self::last_error_pub());
+        }
+        Ok(())
+    }
+
+    /// delete_pages(from_page=-1, to_page=-1) -> None
+    ///
+    /// 删除闭区间 [from_page, to_page] 内的所有页（PyMuPDF 兼容语义）。
+    /// -1 表示边界：from_page=-1 → 0；to_page=-1 → 末页。
+    /// 内部转成 MuPDF 半开区间 [start, end+1) 调用 C 层。
+    #[pyo3(signature = (from_page=-1, to_page=-1))]
+    fn delete_pages(&self, from_page: i32, to_page: i32) -> PyResult<()> {
+        // 先取总页数，把 -1 转成实际值，并构造半开区间
+        let n = unsafe { mupdf_safe_count_pages(self.ctx, self.raw) };
+        if n < 0 {
+            return Err(Self::last_error_pub());
+        }
+        let start = if from_page < 0 { 0 } else { from_page };
+        let to = if to_page < 0 { n - 1 } else { to_page };
+        if to < start {
+            return Err(PyRuntimeError::new_err(format!(
+                "delete_pages: invalid range [{}, {}]", from_page, to_page
+            )));
+        }
+        // MuPDF pdf_delete_page_range 是半开 [start, end)，传入 to+1
+        let rc = unsafe {
+            mupdf_safe_delete_page_range(self.ctx, self.raw, start as c_int, (to + 1) as c_int)
+        };
+        if rc != 0 {
+            return Err(Self::last_error_pub());
+        }
+        Ok(())
+    }
+
+    /// move_page(src, dst) -> None
+    ///
+    /// 把 src 位置的页移动到 dst 位置（0-based）。
+    fn move_page(&self, src: i32, dst: i32) -> PyResult<()> {
+        let rc = unsafe { mupdf_safe_move_page(self.ctx, self.raw, src as c_int, dst as c_int) };
+        if rc != 0 {
+            return Err(Self::last_error_pub());
+        }
+        Ok(())
+    }
+
+    /// copy_page(src, dst) -> None
+    ///
+    /// 在 dst 位置克隆一份 src 页（同文档内）。
+    fn copy_page(&self, src: i32, dst: i32) -> PyResult<()> {
+        let rc = unsafe { mupdf_safe_copy_page(self.ctx, self.raw, dst as c_int, src as c_int) };
+        if rc != 0 {
+            return Err(Self::last_error_pub());
+        }
+        Ok(())
+    }
+
+    /// insert_pdf(docsrc, start=0, end=-1, at=-1) -> None
+    ///
+    /// 把 docsrc 的 [start, end) 页（0-based 半开区间）复制插入到当前文档的 at 位置。
+    /// - start=-1 → 0；end=-1 → docsrc 末尾；at=-1 → 当前文档末尾追加。
+    ///
+    /// 实现：内部用 docsrc 的 filename 在当前文档的 fz_context 里重新打开源文件，
+    /// 避免 MuPDF 跨 ctx graft_page 的 UB。因此 docsrc 必须仍指向一个有效可读路径。
+    #[pyo3(signature = (docsrc, start=0, end=-1, at=-1))]
+    fn insert_pdf(
+        slf: &Bound<'_, Self>,
+        docsrc: &Bound<'_, PyDocument>,
+        start: i32,
+        end: i32,
+        at: i32,
+    ) -> PyResult<()> {
+        let src_path = docsrc.borrow().filename.clone();
+        let c_path = CString::new(src_path.as_str())
+            .map_err(|_| PyRuntimeError::new_err("docsrc filename contains NUL byte"))?;
+        let (dst_ctx, dst_raw) = {
+            let inner = slf.borrow();
+            (inner.ctx, inner.raw)
+        };
+        let rc = unsafe {
+            mupdf_safe_insert_pdf(dst_ctx, dst_raw, at as c_int, c_path.as_ptr(), start as c_int, end as c_int)
+        };
+        if rc != 0 {
+            return Err(Self::last_error_pub());
+        }
+        Ok(())
     }
 
     /// load_page(index) -> Page。
