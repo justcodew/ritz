@@ -6,6 +6,7 @@ fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let workspace_root = manifest_dir.parent().and_then(|p| p.parent()).unwrap();
     let mupdf_dir = workspace_root.join("vendor/mupdf");
+    let patches_dir = workspace_root.join("patches");
 
     // 1. 校验 MuPDF 子模块存在
     if !mupdf_dir.join("include/mupdf/fitz.h").exists() {
@@ -17,6 +18,9 @@ fn main() {
         );
     }
 
+    // 2. 应用 patches/ 目录下的补丁（plan_v1 §5.5）
+    apply_patches(&patches_dir, &mupdf_dir);
+
     let release_dir = build_mupdf(&mupdf_dir);
     link_mupdf(&release_dir);
     compile_c_wrapper(&manifest_dir, &mupdf_dir);
@@ -27,6 +31,77 @@ fn main() {
     println!("cargo:rerun-if-changed=native/error_wrapper.h");
     println!("cargo:rerun-if-changed=native/mupdf_extensions.c");
     println!("cargo:rerun-if-changed=native/mupdf_extensions.h");
+    // 监听 patches 目录变化
+    println!("cargo:rerun-if-changed=../patches");
+}
+
+/// 应用 patches/ 目录下的补丁到 MuPDF 子模块（plan_v1 §5.5）。
+///
+/// 工作流：
+///   - patches/*.patch 按字母顺序应用
+///   - 每个补丁先 `git apply --check` 探测
+///   - 如果正向 check 通过 → 应用（`git apply`）
+///   - 如果反向 check 通过 → 已应用，幂等跳过
+///   - 否则 → 警告但继续（避免阻塞 CI；本地需手动排查）
+///
+/// 补丁生成方式（推荐）：
+///   cd vendor/mupdf
+///   # 编辑文件...
+///   git diff > ../../patches/0001-my-change.patch
+///   git checkout .  # 回滚子模块，让 build.rs 重新应用
+fn apply_patches(patches_dir: &std::path::Path, mupdf_dir: &std::path::Path) {
+    if !patches_dir.exists() {
+        return;
+    }
+    let mut patches: Vec<_> = match std::fs::read_dir(patches_dir) {
+        Ok(rd) => rd.filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("patch"))
+            .collect(),
+        Err(_) => return,
+    };
+    patches.sort();
+
+    for patch in &patches {
+        let name = patch.file_name().unwrap().to_string_lossy();
+        // 先正向 check：能应用？
+        let check = Command::new("git")
+            .arg("-C").arg(mupdf_dir)
+            .arg("apply").arg("--check")
+            .arg(patch)
+            .output();
+        let can_apply = match check {
+            Ok(out) => out.status.success(),
+            Err(_) => false,
+        };
+        if can_apply {
+            let apply = Command::new("git")
+                .arg("-C").arg(mupdf_dir)
+                .arg("apply")
+                .arg(patch)
+                .status();
+            match apply {
+                Ok(s) if s.success() => println!("cargo:warning=applied patch {}", name),
+                _ => println!("cargo:warning=FAILED to apply patch {} (apply error)", name),
+            }
+            continue;
+        }
+        // 反向 check：已应用？
+        let reverse_check = Command::new("git")
+            .arg("-C").arg(mupdf_dir)
+            .arg("apply").arg("--check").arg("--reverse")
+            .arg(patch)
+            .output();
+        let already_applied = match reverse_check {
+            Ok(out) => out.status.success(),
+            Err(_) => false,
+        };
+        if already_applied {
+            // 幂等跳过
+            continue;
+        }
+        println!("cargo:warning=patch {} does not apply cleanly (conflict?); skipping", name);
+    }
 }
 
 /// 编译 MuPDF 静态库。

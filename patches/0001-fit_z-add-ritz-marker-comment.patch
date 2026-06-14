@@ -1,0 +1,8 @@
+diff --git a/include/mupdf/fitz.h b/include/mupdf/fitz.h
+--- a/include/mupdf/fitz.h
++++ b/include/mupdf/fitz.h
+@@ -1,3 +1,4 @@
++// This MuPDF build is consumed by ritz (Rust + PyO3 bindings).
+ // Copyright (C) 2004-2025 Artifex Software, Inc.
+ //
+ // This file is part of MuPDF.
