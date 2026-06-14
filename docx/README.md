@@ -19,6 +19,7 @@
 | [08-comparison-with-pdf-oxide.md](08-comparison-with-pdf-oxide.md) | pdf_oxide 对比 | ritz vs pdf_oxide 谁更快？MIT vs AGPL？ |
 | [09-acceleration-opportunities.md](09-acceleration-opportunities.md) | 加速机会审计 | plan_v1 之后还能再快吗？实现层的低垂果实 |
 | [10-tier1-tier2-results.md](10-tier1-tier2-results.md) | Tier 1+2 优化结果 | 哪些优化真有效、哪些是噪声、哪些有风险 |
+| [11-phase5a-read-path.md](11-phase5a-read-path.md) | Phase 5a 读路径 | search_for + get_toc 的实现细节 |
 
 ## 快速导航
 
@@ -34,6 +35,7 @@
 - 跟 pdf_oxide 比怎么样 → [08-comparison-with-pdf-oxide](08-comparison-with-pdf-oxide.md)
 - 还能再加速吗 → [09-acceleration-opportunities](09-acceleration-opportunities.md)
 - Tier 1/2 优化做完了吗，效果如何 → [10-tier1-tier2-results](10-tier1-tier2-results.md)
+- Phase 5a search_for / get_toc 怎么实现的 → [11-phase5a-read-path](11-phase5a-read-path.md)
 
 ## 相关文件
 
