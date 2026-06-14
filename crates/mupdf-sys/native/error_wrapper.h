@@ -215,6 +215,18 @@ int mupdf_safe_set_toc(fz_context *ctx, fz_document *doc,
                        const int *levels, const int *pages,
                        const char **titles, int count);
 
+/* ---- 命名目标解析（Phase 5d） ---- */
+/*
+ * 遍历 PDF Names/Dests 树，返回所有命名目标。
+ * 二进制布局（每个条目）：
+ *   [name_len: i32][name utf8 bytes][page: i32][x: f32][y: f32]
+ * page 为 0-based 页码，-1 表示无法解析。
+ * 文档无命名目标时 *out=NULL, *total_n=0, 返回 0。
+ * 调用方通过 mupdf_free 释放。
+ */
+int mupdf_safe_resolve_names(fz_context *ctx, fz_document *doc,
+                             char **out, size_t *out_len, int *total_n);
+
 /* ---- 内存释放 ---- */
 void mupdf_free(void *ptr);
 

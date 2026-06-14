@@ -6,8 +6,8 @@ use mupdf_sys::{
     mupdf_ext_extract_pages_text, mupdf_safe_authenticate_password, mupdf_safe_count_pages,
     mupdf_safe_drop_document, mupdf_safe_drop_context, mupdf_safe_load_outline,
     mupdf_safe_load_page, mupdf_safe_lookup_metadata, mupdf_safe_needs_password,
-    mupdf_safe_new_context, mupdf_safe_open_document, mupdf_safe_save_document,
-    mupdf_safe_set_toc,
+    mupdf_safe_new_context, mupdf_safe_open_document, mupdf_safe_resolve_names,
+    mupdf_safe_save_document, mupdf_safe_set_toc,
 };
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -279,6 +279,60 @@ impl PyDocument {
             return Err(Self::last_error_pub());
         }
         Ok(())
+    }
+
+    /// resolve_names() -> dict[str, (page, x, y)]
+    ///
+    /// 返回 PDF 所有命名目标（named destinations）的映射。
+    /// 每个 key 是目标名称字符串，value 是 (page, x, y) 元组：
+    /// - page: 0-based 页码
+    /// - x, y: 目标坐标（PDF 用户空间）
+    ///
+    /// 文档无命名目标时返回空 dict。
+    fn resolve_names(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let mut ptr: *mut c_char = ptr::null_mut();
+        let mut total_len: usize = 0;
+        let mut n: c_int = 0;
+        let rc = unsafe {
+            mupdf_safe_resolve_names(self.ctx, self.raw, &mut ptr, &mut total_len, &mut n)
+        };
+        if rc != 0 {
+            return Err(Self::last_error_pub());
+        }
+
+        let result = (|| -> PyResult<Py<PyAny>> {
+            let dict = PyDict::new(py);
+            if n == 0 || ptr.is_null() || total_len == 0 {
+                return Ok(dict.into_any().unbind());
+            }
+
+            let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, total_len) };
+            let mut off = 0usize;
+            for _ in 0..n {
+                if off + 4 > bytes.len() {
+                    return Err(PyRuntimeError::new_err("resolve_names: buffer underrun"));
+                }
+                let name_len = i32::from_ne_bytes(bytes[off..off + 4].try_into().unwrap()) as usize;
+                off += 4;
+                if off + name_len + 12 > bytes.len() {
+                    return Err(PyRuntimeError::new_err("resolve_names: buffer underrun"));
+                }
+                let name = std::str::from_utf8(&bytes[off..off + name_len])
+                    .map_err(|e| PyRuntimeError::new_err(format!("resolve_names: name not utf8: {}", e)))?;
+                off += name_len;
+                let page = i32::from_ne_bytes(bytes[off..off + 4].try_into().unwrap());
+                let x = f32::from_ne_bytes(bytes[off + 4..off + 8].try_into().unwrap());
+                let y = f32::from_ne_bytes(bytes[off + 8..off + 12].try_into().unwrap());
+                off += 12;
+
+                let val = (page, x, y).into_pyobject(py)?.into_any().unbind();
+                dict.set_item(name, val)?;
+            }
+            Ok(dict.into_any().unbind())
+        })();
+
+        unsafe { mupdf_sys::mupdf_free(ptr as *mut _) };
+        result
     }
 
     /// load_page(index) -> Page。

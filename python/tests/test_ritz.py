@@ -686,3 +686,37 @@ class TestSetToc:
         assert result[0][1] == "Introduction"
         assert result[6][1] == "Conclusion"
         assert result[3][0] == 2  # "Data Collection" level
+
+
+class TestResolveNames:
+    """doc.resolve_names() 命名目标解析测试。"""
+
+    def test_resolve_names_empty(self):
+        """sample.pdf 无命名目标，返回空 dict。"""
+        d = ritz.open(sample_pdf())
+        result = d.resolve_names()
+        assert isinstance(result, dict)
+        assert len(result) == 0
+
+    def test_resolve_names_type(self):
+        """返回值类型检查。"""
+        d = ritz.open(sample_pdf())
+        result = d.resolve_names()
+        assert isinstance(result, dict)
+        # 每个 value 应是 (page, x, y) 元组
+        for name, dest in result.items():
+            assert isinstance(name, str)
+            assert isinstance(dest, tuple)
+            assert len(dest) == 3
+            assert isinstance(dest[0], int)  # page
+            assert isinstance(dest[1], float)  # x
+            assert isinstance(dest[2], float)  # y
+
+    def test_resolve_names_survives_save(self, tmp_path):
+        """save + reopen 后仍可调用。"""
+        d = ritz.open(sample_pdf())
+        out = tmp_path / "names.pdf"
+        d.save(str(out))
+        d2 = ritz.open(str(out))
+        result = d2.resolve_names()
+        assert isinstance(result, dict)

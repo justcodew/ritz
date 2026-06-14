@@ -1819,6 +1819,81 @@ int mupdf_safe_set_toc(fz_context *ctx, fz_document *doc,
 }
 
 /* ====================================================================
+ * 命名目标解析（Phase 5d）
+ * ==================================================================== */
+
+int mupdf_safe_resolve_names(fz_context *ctx, fz_document *doc,
+                             char **out, size_t *out_len, int *total_n) {
+    if (!ctx || !doc || !out || !out_len || !total_n) return -1;
+    *out = NULL; *out_len = 0; *total_n = 0;
+
+    growbuf gb = {0};
+    int count = 0;
+    pdf_obj *tree = NULL;
+
+    mupdf_clear_error();
+    fz_try(ctx) {
+        pdf_document *pdf = pdf_document_from_fz_document(ctx, doc);
+        if (!pdf) fz_throw(ctx, FZ_ERROR_GENERIC, "not a pdf document");
+
+        tree = pdf_load_name_tree(ctx, pdf, PDF_NAME(Dests));
+        if (!tree || !pdf_is_dict(ctx, tree)) {
+            /* 无命名目标 */
+            fz_always(ctx) {
+                if (tree) { pdf_drop_obj(ctx, tree); tree = NULL; }
+            }
+            fz_catch(ctx) {}
+            return 0;
+        }
+
+        int len = pdf_dict_len(ctx, tree);
+        for (int i = 0; i < len; i++) {
+            pdf_obj *key = pdf_dict_get_key(ctx, tree, i);
+            pdf_obj *val = pdf_dict_get_val(ctx, tree, i);
+            if (!key) continue;
+
+            const char *name = pdf_to_name(ctx, key);
+            int name_len = name ? (int)strlen(name) : 0;
+
+            /* 使用 pdf_resolve_link_dest 解析目标 */
+            char uri[1024];
+            snprintf(uri, sizeof(uri), "#nameddest=%s", name ? name : "");
+            fz_link_dest dest = pdf_resolve_link_dest(ctx, pdf, uri);
+
+            int page = dest.loc.page; /* 0-based, -1 if unresolvable */
+            float x = dest.x;
+            float y = dest.y;
+
+            /* 写入 buffer: [name_len][name bytes][page][x][y] */
+            gb_put(ctx, &gb, &name_len, 4);
+            if (name_len > 0) gb_put(ctx, &gb, name, (size_t)name_len);
+            gb_put(ctx, &gb, &page, 4);
+            gb_put(ctx, &gb, &x, 4);
+            gb_put(ctx, &gb, &y, 4);
+            count++;
+        }
+    }
+    fz_always(ctx) {
+        if (tree) pdf_drop_obj(ctx, tree);
+    }
+    fz_catch(ctx) {
+        set_error("resolve names: %s", fz_caught_message(ctx));
+        if (gb.data) fz_free(ctx, gb.data);
+        return -1;
+    }
+
+    if (count == 0) {
+        if (gb.data) fz_free(ctx, gb.data);
+        return 0;
+    }
+
+    *out = (char *)gb.data;
+    *out_len = gb.len;
+    *total_n = count;
+    return 0;
+}
+
+/* ====================================================================
  * 内存释放
  * ==================================================================== */
 

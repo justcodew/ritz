@@ -37518,6 +37518,15 @@ extern "C" {
     ) -> ::std::os::raw::c_int;
 }
 extern "C" {
+    pub fn mupdf_safe_resolve_names(
+        ctx: *mut fz_context,
+        doc: *mut fz_document,
+        out: *mut *mut ::std::os::raw::c_char,
+        out_len: *mut usize,
+        total_n: *mut ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
     pub fn mupdf_free(ptr: *mut ::std::os::raw::c_void);
 }
 extern "C" {
