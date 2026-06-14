@@ -11,9 +11,24 @@ PyMuPDF 兼容 API 的 Rust 实现（基于 MuPDF）。
     pix.tobytes("png")  # PNG bytes
 """
 
-from ._ritz import Document, Page, Pixmap, __version__, process_documents
+from ._ritz import (
+    Document,
+    Page,
+    PdfValue,
+    Pixmap,
+    __version__,
+    process_documents,
+)
 
 # 与 PyMuPDF 兼容：顶层 open() 函数。
 open = Document
 
-__all__ = ["Document", "Page", "Pixmap", "open", "process_documents", "__version__"]
+__all__ = [
+    "Document",
+    "Page",
+    "PdfValue",
+    "Pixmap",
+    "open",
+    "process_documents",
+    "__version__",
+]

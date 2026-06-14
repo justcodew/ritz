@@ -13,30 +13,54 @@ use mupdf_sys::{
 };
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict};
+use pyo3::types::{PyBytes, PyDict, PyString};
 use std::os::raw::{c_char, c_int};
 use std::ptr;
+use std::sync::OnceLock;
 
 /// Page — 单页（绑定到一个 Document 上）。
 ///
 /// 安全性：Page 持有 `Py<PyDocument>` 引用计数，确保 Document 不会先于 Page 被 GC。
 /// Drop 顺序：raw_page 先 drop（借用 ctx），然后 doc_handle 释放引用（可能触发 Document GC）。
+///
+/// 加速缓存（plan_v1 后 Tier 1 优化）：
+/// - `raw_doc`：load_page 时一次性取，省去每次方法调用时 `doc_handle.bind(py).borrow()` 的开销
+/// - `rect_cache`：rect/width/height 三个 getter 共享一次 `fz_bound_page` 调用结果
 #[pyclass(name = "Page")]
 pub struct PyPage {
     pub(crate) ctx: *mut fz_context,
     pub(crate) raw: *mut fz_page,
+    /// 父 doc 的裸指针。与 `doc_handle.raw` 同生命周期（doc_handle 持引用保活）。
+    pub(crate) raw_doc: *mut mupdf_sys::fz_document,
     /// 持有父 Document 的引用，确保 Document 存活。
     #[allow(dead_code)]
     pub(crate) doc_handle: Py<PyDocument>,
+    /// `fz_bound_page` 结果缓存。页面是不可变的，可安全缓存。
+    rect_cache: OnceLock<(f32, f32, f32, f32)>,
 }
 
 impl PyPage {
-    pub(crate) fn new(doc_handle: Py<PyDocument>, ctx: *mut fz_context, raw: *mut fz_page) -> Self {
+    pub(crate) fn new(
+        doc_handle: Py<PyDocument>,
+        ctx: *mut fz_context,
+        raw_doc: *mut mupdf_sys::fz_document,
+        raw: *mut fz_page,
+    ) -> Self {
         PyPage {
             ctx,
             raw,
+            raw_doc,
             doc_handle,
+            rect_cache: OnceLock::new(),
         }
+    }
+
+    /// 返回缓存的 rect，首次访问时计算。
+    fn cached_rect(&self) -> (f32, f32, f32, f32) {
+        *self.rect_cache.get_or_init(|| {
+            let r = unsafe { mupdf_safe_bound_page(self.ctx, self.raw) };
+            (r.x0, r.y0, r.x1, r.y1)
+        })
     }
 }
 
@@ -45,22 +69,21 @@ impl PyPage {
     /// 页面矩形（x0, y0, x1, y1）。原点在左下。
     #[getter]
     fn rect(&self) -> (f32, f32, f32, f32) {
-        let r = unsafe { mupdf_safe_bound_page(self.ctx, self.raw) };
-        (r.x0, r.y0, r.x1, r.y1)
+        self.cached_rect()
     }
 
     /// 页面宽度（pt）。
     #[getter]
     fn width(&self) -> f32 {
-        let r = unsafe { mupdf_safe_bound_page(self.ctx, self.raw) };
-        r.x1 - r.x0
+        let (x0, _, x1, _) = self.cached_rect();
+        x1 - x0
     }
 
     /// 页面高度（pt）。
     #[getter]
     fn height(&self) -> f32 {
-        let r = unsafe { mupdf_safe_bound_page(self.ctx, self.raw) };
-        r.y1 - r.y0
+        let (_, y0, _, y1) = self.cached_rect();
+        y1 - y0
     }
 
     /// mediabox（x0, y0, x1, y1）。
@@ -79,11 +102,8 @@ impl PyPage {
 
     /// rotation（0/90/180/270）。仅 PDF 文档有效，非 PDF 返回 0。
     #[getter]
-    fn rotation(&self, py: Python<'_>) -> i32 {
-        let doc = self.doc_handle.bind(py).borrow();
-        let doc_ptr = doc.raw;
-        drop(doc);
-        unsafe { mupdf_safe_page_rotation(self.ctx, doc_ptr, self.raw) as i32 }
+    fn rotation(&self) -> i32 {
+        unsafe { mupdf_safe_page_rotation(self.ctx, self.raw_doc, self.raw) as i32 }
     }
 
     /// get_text(mode="text") -> str | list | dict
@@ -183,8 +203,9 @@ impl PyPage {
     /// get_images(include_data=False) -> list[dict]
     ///
     /// 列出页面上所有图片（按 fz_image* 去重）。
-    /// 每条返回 {"bbox", "width", "height", "bpc", "colorspace", "imagemask"}；
-    /// include_data=True 时额外含 "image"（PNG 字节）。
+    /// 每条返回 {"xref", "bbox", "width", "height", "bpc", "colorspace", "imagemask"}；
+    /// include_data=True 时额外含 "ext"（"jpeg"/"png"/"jpx"）和 "image"（原始压缩字节）。
+    /// xref 为 PDF 间接引用号；非 PDF 或未在资源表中找到时为 0。
     #[pyo3(signature = (include_data=false))]
     fn get_images(
         &self,
@@ -194,9 +215,11 @@ impl PyPage {
         let mut ptr: *mut c_char = ptr::null_mut();
         let mut total_len: usize = 0;
         let mut n: c_int = 0;
+        // raw_doc 在 Page 构造时一次性缓存（Py<PyDocument> 保证 doc 存活）
         let rc = unsafe {
             mupdf_safe_get_images(
                 self.ctx,
+                self.raw_doc,
                 self.raw,
                 if include_data { 1 } else { 0 },
                 &mut ptr,
@@ -250,6 +273,7 @@ impl PyPage {
 
             let mut out = Vec::with_capacity(n as usize);
             for _ in 0..n {
+                let xref = take_i32(&mut off)?;
                 let bx0 = take_f32(&mut off)?;
                 let by0 = take_f32(&mut off)?;
                 let bx1 = take_f32(&mut off)?;
@@ -262,6 +286,7 @@ impl PyPage {
                 let has_data = take_i32(&mut off)?;
 
                 let d = PyDict::new(py);
+                d.set_item("xref", xref)?;
                 d.set_item("bbox", (bx0, by0, bx1, by1))?;
                 d.set_item("width", w)?;
                 d.set_item("height", h)?;
@@ -270,10 +295,12 @@ impl PyPage {
                 d.set_item("imagemask", mask)?;
 
                 if has_data != 0 {
+                    let ext = take_str(&mut off)?;
                     let dlen = take_i32(&mut off)? as usize;
                     need(dlen, off)?;
                     let py_bytes = PyBytes::new(py, &bytes[off..off + dlen]);
                     off += dlen;
+                    d.set_item("ext", &ext)?;
                     d.set_item("image", py_bytes)?;
                 }
                 out.push(d.into_any().unbind());
@@ -291,6 +318,10 @@ impl PyPage {
     /// matrix: 6 元组 (a,b,c,d,e,f)，目前只使用 a/d 作为缩放因子（保持简单）。
     /// dpi: 优先级高于 matrix，若设置则 zoom = dpi/72。
     /// 都不传时 zoom=1.0（72 DPI）。
+    ///
+    /// GIL 释放：渲染期间不持 GIL，允许其他 Python 线程并行。
+    /// 注意：**同一 Document 的多个 Page 并发渲染是 UB**（MuPDF ctx 无锁）。
+    /// 跨文档并行是安全的（每个 doc 独立 ctx）。
     #[pyo3(signature = (matrix = None, dpi = None, alpha = false))]
     fn get_pixmap(
         &self,
@@ -307,11 +338,20 @@ impl PyPage {
             1.0
         };
 
-        let mut pix: *mut fz_pixmap = ptr::null_mut();
-        let rc = unsafe {
-            mupdf_safe_render_pixmap(self.ctx, self.raw, zoom, alpha as c_int, &mut pix)
-        };
-        if rc != 0 || pix.is_null() {
+        // 把裸指针经由 usize 传入 closure（py.detach 要求 Send，裸指针本身 !Send）。
+        // ctx/raw 都是 MuPDF 内部不变量，渲染期间只读，安全。
+        let ctx_addr = self.ctx as usize;
+        let raw_addr = self.raw as usize;
+        let alpha_i = alpha as c_int;
+        let result: (c_int, usize) = py.detach(move || {
+            let ctx = ctx_addr as *mut fz_context;
+            let raw = raw_addr as *mut fz_page;
+            let mut pix: *mut fz_pixmap = ptr::null_mut();
+            let rc = unsafe { mupdf_safe_render_pixmap(ctx, raw, zoom, alpha_i, &mut pix) };
+            (rc, pix as usize)
+        });
+        let pix = result.1 as *mut fz_pixmap;
+        if result.0 != 0 || pix.is_null() {
             return Err(PyDocument::last_error_pub());
         }
         Ok(PyPixmap::new(self.doc_handle.clone_ref(py), self.ctx, pix))
@@ -323,7 +363,12 @@ impl PyPage {
 }
 
 impl PyPage {
-    fn stext_to_string(&self, py: Python<'_>, stpage: *mut fz_stext_page, mode: &str) -> PyResult<Py<PyAny>> {
+    fn stext_to_string<'py>(
+        &self,
+        py: Python<'py>,
+        stpage: *mut fz_stext_page,
+        mode: &str,
+    ) -> PyResult<Py<PyAny>> {
         let mut ptr: *mut c_char = ptr::null_mut();
         let mut len: usize = 0;
         let rc = unsafe {
@@ -338,16 +383,16 @@ impl PyPage {
         if rc != 0 {
             return Err(PyDocument::last_error_pub());
         }
-        let s = cbuf_to_string(ptr, len);
+        let py_str = cbuf_to_pystring(py, ptr, len)?;
         if !ptr.is_null() {
             unsafe { mupdf_sys::mupdf_free(ptr as *mut _) };
         }
-        Ok(s.into_pyobject(py)?.into_any().unbind())
+        Ok(py_str.into_any().unbind())
     }
 
-    fn stext_to_json(
+    fn stext_to_json<'py>(
         &self,
-        py: Python<'_>,
+        py: Python<'py>,
         stpage: *mut fz_stext_page,
         scale: f32,
     ) -> PyResult<Py<PyAny>> {
@@ -357,11 +402,11 @@ impl PyPage {
         if rc != 0 {
             return Err(PyDocument::last_error_pub());
         }
-        let s = cbuf_to_string(ptr, len);
+        let py_str = cbuf_to_pystring(py, ptr, len)?;
         if !ptr.is_null() {
             unsafe { mupdf_sys::mupdf_free(ptr as *mut _) };
         }
-        Ok(s.into_pyobject(py)?.into_any().unbind())
+        Ok(py_str.into_any().unbind())
     }
 
     /// 单词级提取：返回 PyMuPDF 兼容的 list of tuples
@@ -629,13 +674,30 @@ impl PyPage {
     }
 }
 
-fn cbuf_to_string(ptr: *const c_char, len: usize) -> String {
+/// C 字节缓冲 → PyString 的快速路径。
+///
+/// Tier 2 #8 优化：替换原先的 `cbuf_to_string`（`String::from_utf8_lossy + into_owned`）
+/// + `into_pyobject`，省一次堆分配 + 一次拷贝。
+///
+/// 安全：MuPDF 输出本就是 UTF-8。但为防 corrupt PDF，先 `std::str::from_utf8` 校验
+/// （零拷贝、返回 Result），失败时回退到 lossy（与旧行为一致）。
+fn cbuf_to_pystring<'py>(
+    py: Python<'py>,
+    ptr: *const c_char,
+    len: usize,
+) -> PyResult<Bound<'py, PyString>> {
     if ptr.is_null() || len == 0 {
-        return String::new();
+        return Ok(PyString::new(py, ""));
     }
-    unsafe {
-        let slice = std::slice::from_raw_parts(ptr as *const u8, len);
-        String::from_utf8_lossy(slice).into_owned()
+    let slice = unsafe { std::slice::from_raw_parts(ptr as *const u8, len) };
+    // Fast path：合法 UTF-8 → 单次拷贝构造 PyString
+    match std::str::from_utf8(slice) {
+        Ok(s) => Ok(PyString::new(py, s)),
+        Err(_) => {
+            // Slow path：corrupt PDF 触发，lossy 替换。仍只构造一次 PyString。
+            let lossy = String::from_utf8_lossy(slice);
+            Ok(PyString::new(py, &lossy))
+        }
     }
 }
 

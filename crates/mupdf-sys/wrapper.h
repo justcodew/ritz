@@ -7,3 +7,4 @@
 
 /* 手写 C 包装层头文件 */
 #include "error_wrapper.h"
+#include "mupdf_extensions.h"

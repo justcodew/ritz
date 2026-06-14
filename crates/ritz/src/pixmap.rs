@@ -76,6 +76,8 @@ impl PyPixmap {
     /// tobytes(format="png") -> bytes
     ///
     /// 当前仅支持 png。PyMuPDF 还支持 pam/pgm/ppm 等，阶段三补充。
+    ///
+    /// 优化（Tier 1 #4）：直接从 C 缓冲构造 PyBytes，省一次 Vec 拷贝。
     #[pyo3(signature = (format = "png"))]
     fn tobytes<'py>(&self, format: &str, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         match format {
@@ -88,18 +90,17 @@ impl PyPixmap {
                 if rc != 0 {
                     return Err(PyDocument::last_error_pub());
                 }
-                let bytes = if ptr.is_null() || len == 0 {
-                    Vec::new()
-                } else {
-                    unsafe {
-                        let slice = std::slice::from_raw_parts(ptr, len);
-                        slice.to_vec()
+                let result = (|| -> PyResult<Bound<'py, PyBytes>> {
+                    if ptr.is_null() || len == 0 {
+                        return Ok(PyBytes::new(py, &[]));
                     }
-                };
+                    let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+                    Ok(PyBytes::new(py, slice))
+                })();
                 if !ptr.is_null() {
                     unsafe { mupdf_sys::mupdf_free(ptr as *mut _) };
                 }
-                Ok(PyBytes::new(py, &bytes))
+                result
             }
             other => Err(PyRuntimeError::new_err(format!(
                 "unsupported pixmap format: '{}' (only 'png' supported)",

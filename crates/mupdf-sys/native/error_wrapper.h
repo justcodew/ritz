@@ -148,12 +148,15 @@ int mupdf_safe_load_links(fz_context *ctx, fz_page *page,
 /*
  * 遍历页面上所有图片（按 fz_image* 去重）。
  * 二进制布局：[image_count: i32] then per image:
+ *   [xref: i32]                  // PDF 间接引用号；0 表示非 PDF 或未找到
  *   [bbox: 4 floats][w: i32][h: i32][bpc: i32]
  *   [cs_len: i32][cs bytes][imagemask: i32][has_data: i32]
- *   if has_data: [data_len: i32][png bytes]
- * include_data != 0 时额外编码每张图为 PNG。
+ *   if has_data: [ext_len: i32][ext bytes][data_len: i32][data bytes]
+ * include_data != 0 时返回原始压缩字节（JPEG/PNG/JPX）或 PNG fallback。
+ * doc 参数：传入父 fz_document* 以查询 xref（仅 PDF 有效，传 NULL 不查 xref）。
  */
-int mupdf_safe_get_images(fz_context *ctx, fz_page *page, int include_data,
+int mupdf_safe_get_images(fz_context *ctx, fz_document *doc, fz_page *page,
+                          int include_data,
                           char **out, size_t *out_len, int *total_n);
 
 /* ---- 内存释放 ---- */

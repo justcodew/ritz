@@ -10,16 +10,22 @@ use mupdf_sys::{
 };
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 use std::ffi::CString;
 use std::os::raw::c_int;
 use std::ptr;
+use std::sync::OnceLock;
 
 /// Document(filename) — 打开 PDF 文档。
+///
+/// 加速缓存（plan_v1 后 Tier 1 优化）：
+/// - `metadata_cache`：metadata @property 首次访问后缓存 Py<PyAny>，避免每次访问都走 9 次 FFI
 #[pyclass(name = "Document")]
 pub struct PyDocument {
     /// 原始 ctx 指针。Drop 顺序：doc 先 drop，再 drop ctx。
     pub(crate) ctx: *mut fz_context,
     pub(crate) raw: *mut fz_document,
+    metadata_cache: OnceLock<Py<PyAny>>,
 }
 
 impl PyDocument {
@@ -55,7 +61,7 @@ impl PyDocument {
             return Err(Self::last_error_pub());
         }
 
-        Ok(PyDocument { ctx, raw })
+        Ok(PyDocument { ctx, raw, metadata_cache: OnceLock::new() })
     }
 
     /// 页数。
@@ -93,9 +99,54 @@ impl PyDocument {
         Ok(ok != 0)
     }
 
-    /// metadata(key) -> str | None。
+    /// metadata — 与 PyMuPDF 兼容的 @property，返回完整元数据 dict。
+    ///
+    /// 字段：format, title, author, subject, keywords, creator, producer,
+    ///       creationDate, modDate, encryption
+    /// 缺失字段值为 None。
+    ///
+    /// 缓存：首次访问后 memoize（OnceLock），后续访问直接返回缓存 dict。
+    #[getter]
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        if let Some(cached) = self.metadata_cache.get() {
+            return Ok(cached.clone_ref(py));
+        }
+        let d = PyDict::new(py);
+        // PyMuPDF 标准字段 → MuPDF metadata key
+        // info:* 取 info dict 的字段；format/encryption 直接走 lookup。
+        let keys: &[(&str, &str)] = &[
+            ("format", "format"),
+            ("title", "info:Title"),
+            ("author", "info:Author"),
+            ("subject", "info:Subject"),
+            ("keywords", "info:Keywords"),
+            ("creator", "info:Creator"),
+            ("producer", "info:Producer"),
+            ("creationDate", "info:CreationDate"),
+            ("modDate", "info:ModDate"),
+        ];
+        for (field, mupdf_key) in keys {
+            let val = self.lookup_metadata(mupdf_key)?;
+            d.set_item(field, val)?;
+        }
+        // encryption：基于 is_encrypted 给字符串或 None
+        let enc = if self.is_encrypted() {
+            Some("yes".to_string())
+        } else {
+            None
+        };
+        d.set_item("encryption", enc)?;
+        let bound = d.into_any().unbind();
+        // get_or_init 防并发：若另一线程先填了，使用其结果（语义等价）。
+        let stored = self.metadata_cache.get_or_init(|| bound.clone_ref(py));
+        Ok(stored.clone_ref(py))
+    }
+
+    /// lookup_metadata(key) -> str | None
+    ///
+    /// 单字段查询，对应 PyMuPDF `doc.metadata.get(key)` 的底层调用。
     /// 常用 key: "format", "info:Title", "info:Author" 等。
-    fn metadata(&self, key: &str) -> PyResult<Option<String>> {
+    fn lookup_metadata(&self, key: &str) -> PyResult<Option<String>> {
         let c_key = CString::new(key).unwrap_or_default();
         let mut buf = [0u8; 512];
         let n = unsafe {
@@ -143,7 +194,7 @@ impl PyDocument {
         if raw.is_null() {
             return Err(Self::last_error_pub());
         }
-        let page = PyPage::new(doc_handle, ctx, raw);
+        let page = PyPage::new(doc_handle, ctx, raw_doc, raw);
         Py::new(py, page)
     }
 
@@ -157,23 +208,36 @@ impl PyDocument {
     /// 一次性提取所有页的纯文本，避免 N 次 Python↔Rust 往返。
     /// 内部走 mupdf_ext_extract_pages_text，单次 C 调用遍历全文档。
     /// 等价于 [doc[i].get_text("text") for i in range(len(doc))]，但更快。
+    ///
+    /// GIL 释放：批量提取期间不持 GIL，允许其他 Python 线程并行。
     #[pyo3(signature = ())]
     fn get_text_batch(&self, py: Python<'_>) -> PyResult<Vec<Py<PyAny>>> {
-        let mut text_ptr: *mut std::os::raw::c_char = ptr::null_mut();
-        let mut text_len: usize = 0;
-        let mut offsets_ptr: *mut usize = ptr::null_mut();
-        let mut page_count: c_int = 0;
+        // 裸指针经由 usize 传入 closure（py.detach 要求 Send）。
+        let ctx_addr = self.ctx as usize;
+        let raw_addr = self.raw as usize;
+        let extracted: (c_int, usize, usize, usize, usize, c_int) = py.detach(move || {
+            let ctx = ctx_addr as *mut fz_context;
+            let doc = raw_addr as *mut fz_document;
+            let mut text_ptr: *mut std::os::raw::c_char = ptr::null_mut();
+            let mut text_len: usize = 0;
+            let mut offsets_ptr: *mut usize = ptr::null_mut();
+            let mut page_count: c_int = 0;
+            let rc = unsafe {
+                mupdf_ext_extract_pages_text(
+                    ctx,
+                    doc,
+                    &mut text_ptr,
+                    &mut text_len,
+                    &mut offsets_ptr,
+                    &mut page_count,
+                )
+            };
+            (rc, text_ptr as usize, text_len, offsets_ptr as usize, 0, page_count)
+        });
+        let (rc, text_ptr_addr, text_len, offsets_ptr_addr, _, page_count) = extracted;
+        let text_ptr = text_ptr_addr as *mut std::os::raw::c_char;
+        let offsets_ptr = offsets_ptr_addr as *mut usize;
 
-        let rc = unsafe {
-            mupdf_ext_extract_pages_text(
-                self.ctx,
-                self.raw,
-                &mut text_ptr,
-                &mut text_len,
-                &mut offsets_ptr,
-                &mut page_count,
-            )
-        };
         if rc != 0 {
             return Err(Self::last_error_pub());
         }
@@ -198,9 +262,14 @@ impl PyDocument {
                 } else {
                     &bytes[start..]
                 };
-                // PyMuPDF 每页文本通常是 NUL-safe 的 utf8 lossy
-                let s = String::from_utf8_lossy(slice).into_owned();
-                let py_str = s.into_pyobject(py)?.into_any().unbind();
+                // Tier 2 #8：fast path 直走 PyString，省 String::from_utf8_lossy + into_owned
+                let py_str = match std::str::from_utf8(slice) {
+                    Ok(s) => pyo3::types::PyString::new(py, s).into_any().unbind(),
+                    Err(_) => {
+                        let lossy = String::from_utf8_lossy(slice);
+                        pyo3::types::PyString::new(py, &lossy).into_any().unbind()
+                    }
+                };
                 out.push(py_str);
             }
             Ok(out)

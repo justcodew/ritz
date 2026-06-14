@@ -61,13 +61,20 @@ class TestDocument:
             _ = doc[9999]
 
     def test_metadata_format(self, doc):
-        fmt = doc.metadata("format")
+        # metadata 是 @property dict（PyMuPDF 兼容）
+        md = doc.metadata
+        assert isinstance(md, dict)
         # PyMuPDF 几乎总有 format
-        assert fmt is None or "PDF" in fmt
+        assert md.get("format") is None or "PDF" in md["format"]
 
     def test_metadata_missing_key(self, doc):
-        # 不存在的 key 返回 None 而非抛异常
-        assert doc.metadata("nonexistent_key_xyz") is None
+        # 不存在的 key 通过 .get 返回 None
+        assert doc.metadata.get("nonexistent_key_xyz") is None
+
+    def test_lookup_metadata(self, doc):
+        # lookup_metadata 直接查 MuPDF key
+        fmt = doc.lookup_metadata("format")
+        assert fmt is None or "PDF" in fmt
 
     def test_open_nonexistent(self):
         with pytest.raises(Exception):
@@ -216,6 +223,20 @@ class TestGetImages:
         assert "height" in im
         assert "bpc" in im
         assert "colorspace" in im
+        # plan_v1 §3.2: xref 字段必须存在
+        assert "xref" in im
+        assert isinstance(im["xref"], int)
+        assert im["xref"] >= 0
+        # 与 PyMuPDF xref 一致（若装了 fitz）
+        try:
+            import fitz
+            fd = fitz.open(str(IMAGE_PDF))
+            fitz_imgs = fd[0].get_images(full=True)
+            if fitz_imgs:
+                fitz_xref = fitz_imgs[0][0]
+                assert im["xref"] == fitz_xref, f"xref mismatch: ritz={im['xref']} fitz={fitz_xref}"
+        except ImportError:
+            pass
 
     @pytest.mark.skipif(not IMAGE_PDF.exists(), reason="image test pdf missing")
     def test_image_with_data(self):
@@ -224,9 +245,18 @@ class TestGetImages:
         assert len(imgs) > 0
         im = imgs[0]
         assert "image" in im
+        assert "ext" in im
         b = im["image"]
-        # PNG 头验证：89504e47 0d0a 1a0a
-        assert b[:8] == b"\x89PNG\r\n\x1a\n"
+        ext = im["ext"]
+        # 按格式验证 magic bytes
+        if ext == "jpeg":
+            assert b[:3] == b"\xff\xd8\xff", f"jpeg magic mismatch: {b[:8].hex()}"
+        elif ext == "png":
+            assert b[:8] == b"\x89PNG\r\n\x1a\n", f"png magic mismatch: {b[:8].hex()}"
+        elif ext == "jpx":
+            assert b[:4] == b"\x00\x00\x00\x0c" or b[:4] == b"\xff\x4f\xffQ", f"jpx magic mismatch"
+        # ext 应是已知格式之一
+        assert ext in ("jpeg", "png", "jpx"), f"unexpected ext: {ext!r}"
 
 
 # ----------------------------------------------------------------------------
