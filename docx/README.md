@@ -20,6 +20,9 @@
 | [09-acceleration-opportunities.md](09-acceleration-opportunities.md) | 加速机会审计 | plan_v1 之后还能再快吗？实现层的低垂果实 |
 | [10-tier1-tier2-results.md](10-tier1-tier2-results.md) | Tier 1+2 优化结果 | 哪些优化真有效、哪些是噪声、哪些有风险 |
 | [11-phase5a-read-path.md](11-phase5a-read-path.md) | Phase 5a 读路径 | search_for + get_toc 的实现细节 |
+| [12-phase5b-annotations.md](12-phase5b-annotations.md) | Phase 5b 注释读写 | 注释创建/读取/删除 + refcount 陷阱 + QuadPoints 包围盒 |
+| [13-phase5c-outline-writing.md](13-phase5c-outline-writing.md) | Phase 5c 大纲写入 | doc.set_toc() + doc.save() + iterator 设计缺陷分析 |
+| [14-phase5d-resolve-names.md](14-phase5d-resolve-names.md) | Phase 5d 命名目标 | doc.resolve_names() + pdf_resolve_link_dest 方案 |
 
 ## 快速导航
 
@@ -36,6 +39,9 @@
 - 还能再加速吗 → [09-acceleration-opportunities](09-acceleration-opportunities.md)
 - Tier 1/2 优化做完了吗，效果如何 → [10-tier1-tier2-results](10-tier1-tier2-results.md)
 - Phase 5a search_for / get_toc 怎么实现的 → [11-phase5a-read-path](11-phase5a-read-path.md)
+- 注释读写怎么实现的，有哪些坑 → [12-phase5b-annotations](12-phase5b-annotations.md)
+- set_toc 为什么不用 iterator → [13-phase5c-outline-writing](13-phase5c-outline-writing.md)
+- resolve_names 怎么解析命名目标 → [14-phase5d-resolve-names](14-phase5d-resolve-names.md)
 
 ## 相关文件
 
