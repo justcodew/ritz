@@ -30,6 +30,38 @@
 
 ---
 
+## [0.4.3] - 2026-06-15
+
+### Fixed — Linux arm64 wheel 构建失败
+
+v0.4.2 的 Linux arm64 wheel 构建失败：maturin-action 在 ubuntu-latest 上对
+`aarch64-unknown-linux-gnu` 做 cross-compile 时，会用 Docker manylinux 容器 + qemu
+模拟 ARM，MuPDF C 库在 qemu 下编译失败（`/usr/bin/docker failed with exit code 1`）。
+v0.4.2 tag 推送后，Linux arm64 / macOS Intel 两个 job 失败/卡住，PyPI 未发布。
+
+### 改动
+
+- **Linux arm64 改用 native ARM runner**：matrix 项从
+  `{ os: ubuntu-latest, cross_deps: 'gcc-aarch64-linux-gnu' }`
+  改为 `{ os: ubuntu-24.04-arm, cross_deps: '' }`。2025 年起 GitHub 为公开仓库
+  免费提供 ARM runner，host == target 不再需要 cross 工具链，也不再走 Docker/qemu。
+- 移除 Build wheel step 的 `CC_aarch64_unknown_linux_gnu` / `LD_*` / `AR_*` env
+  （native build 不需要）。"Install cross-compile toolchain" step 保留但
+  `cross_deps == ''` 时跳过。
+- `crates/mupdf-sys/build.rs` 的 cross 分支保留（host != target 时仍生效），
+  native ARM build 时 host == target 自动跳过，等价无影响。
+
+### 覆盖矩阵（v0.4.3 发布后，目标）
+
+| 平台 | Python | wheel |
+|------|--------|-------|
+| macOS arm64 | 3.9-3.13 | `cp39-abi3-macosx_11_0_arm64.whl` |
+| macOS x86_64 | 3.9-3.13 | `cp39-abi3-macosx_10_12_x86_64.whl`（依赖 macos-13 可用） |
+| Linux x86_64 | 3.9-3.13 | `cp39-abi3-manylinux_2_17_x86_64.whl` |
+| Linux arm64 | 3.9-3.13 | `cp39-abi3-manylinux_2_17_aarch64.whl`（native ARM runner） |
+
+---
+
 ## [0.4.2] - 2026-06-15
 
 ### Build — 扩展 PyPI wheel 覆盖

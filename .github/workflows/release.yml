@@ -23,13 +23,13 @@ jobs:
       matrix:
         include:
           # Linux x86_64
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu,  manylinux: auto, cross_deps: '' }
-          # Linux arm64（cross-compile from x86_64 runner）
-          - { os: ubuntu-latest, target: aarch64-unknown-linux-gnu, manylinux: auto, cross_deps: 'gcc-aarch64-linux-gnu' }
+          - { os: ubuntu-latest,   target: x86_64-unknown-linux-gnu,  manylinux: auto, cross_deps: '' }
+          # Linux arm64（native ARM runner；2025 起公开仓库免费，避免 cross-compile + qemu 的坑）
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, manylinux: auto, cross_deps: '' }
           # macOS arm64（Apple Silicon runner）
-          - { os: macos-14,      target: aarch64-apple-darwin,      manylinux: '',   cross_deps: '' }
+          - { os: macos-14,        target: aarch64-apple-darwin,      manylinux: '',   cross_deps: '' }
           # macOS x86_64（Intel runner；可用性偶尔不稳定，靠 continue-on-error 兜底）
-          - { os: macos-13,      target: x86_64-apple-darwin,       manylinux: '',   cross_deps: '' }
+          - { os: macos-13,        target: x86_64-apple-darwin,       manylinux: '',   cross_deps: '' }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -66,11 +66,6 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --out dist
           manylinux: ${{ matrix.manylinux || 'auto' }}
-        env:
-          # Linux arm64 cross：让 cc crate / MuPDF Makefile 找到交叉 gcc
-          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
-          LD_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ld
-          AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
