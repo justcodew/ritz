@@ -73,7 +73,29 @@ Phase 6：文本提取热路径性能优化。针对 corpus benchmark 显示的 
 ### Documentation
 
 - 新增 [docx/16-phase6-stext-perf.md](docx/16-phase6-stext-perf.md) — 完整 8 节设计文档
+- 新增 [docx/17-optimization-dead-ends.md](docx/17-optimization-dead-ends.md) —
+  LTO + 轨道 A 自定义 device 两个失败尝试的复盘，记录假设/PoC/数据/根因
 - README.md corpus 对比表说明更新（指明 cache 是真实场景加速点）
+
+### Build
+
+- `Cargo.toml` 新增 `[profile.release]` 段：`lto=true` + `codegen-units=1`。
+  实测对 ritz 当前场景无可测收益（瓶颈在 MuPDF C 内部，Rust 编译器优化碰不到），
+  保留作为未来 Rust 层逻辑变重时的保险。详见
+  [docx/17-optimization-dead-ends.md](docx/17-optimization-dead-ends.md) 死路 1。
+
+### 优化死路记录
+
+本次 v0.4.0 周期尝试了两条额外优化路径，**两条都失败**，已全部回退或保留为无痕配置：
+
+1. **LTO/codegen-units**：Rust 编译器层面优化，对 C-bound 场景无效
+   （corpus mean 1.0ms → 1.03ms，噪声内）。配置保留（无害）。
+2. **轨道 A 自定义 fz_device**：假设 stext 构造占主导成本（plan_v1 估计 200-500μs），
+   实测 stext 构造只占 ~9μs，且 stext device 有 `lasttext` 去重 + pool allocator 高度优化，
+   minimal device 在大 PDF 上反而更慢（0.58x）。PoC 代码已删除。
+
+两条死路共同证明：MuPDF 1.27 stext 引擎是双方共享地板，ritz 单文档单次提取场景
+已接近优化天花板。详见 [docx/17-optimization-dead-ends.md](docx/17-optimization-dead-ends.md)。
 
 ---
 

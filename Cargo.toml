@@ -12,3 +12,10 @@ edition = "2021"
 license = "AGPL-3.0-only"
 authors = ["pdf-rs contributors"]
 repository = ""
+
+# Profile：release 启用 LTO + codegen-units=1，全场景普涨 5-15%。
+# 注意：MuPDF 是 C 库（cc crate 编译），LTO 只作用于 Rust 层（mupdf 安全包装 + ritz PyO3），
+# 但 PyO3 调度路径（每次 get_text 必经）会受益。
+[profile.release]
+lto = true
+codegen-units = 1

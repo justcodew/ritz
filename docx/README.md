@@ -25,6 +25,7 @@
 | [14-phase5d-resolve-names.md](14-phase5d-resolve-names.md) | Phase 5d 命名目标 | doc.resolve_names() + pdf_resolve_link_dest 方案 |
 | [15-phase5e-page-editing.md](15-phase5e-page-editing.md) | Phase 5e 页面编辑 | new_page/delete_page/move_page/copy_page/insert_pdf + refcount 陷阱 |
 | [16-phase6-stext-perf.md](16-phase6-stext-perf.md) | Phase 6 文本提取性能优化 | stext 缓存（多模式 71x）+ fz_buffer_storage 借用 + UTF-8 跳过 |
+| [17-optimization-dead-ends.md](17-optimization-dead-ends.md) | 优化死路记录 | LTO + 轨道 A 自定义 device 都失败；MuPDF C 引擎是双方共享地板 |
 
 ## 快速导航
 
@@ -46,6 +47,7 @@
 - resolve_names 怎么解析命名目标 → [14-phase5d-resolve-names](14-phase5d-resolve-names.md)
 - 页面编辑（插入/删除/移动/复制/合并 PDF）怎么实现 → [15-phase5e-page-editing](15-phase5e-page-editing.md)
 - 文本提取缓存怎么实现，多模式快多少 → [16-phase6-stext-perf](16-phase6-stext-perf.md)
+- 哪些优化尝试失败了，为什么 → [17-optimization-dead-ends](17-optimization-dead-ends.md)
 
 ## 相关文件
 
