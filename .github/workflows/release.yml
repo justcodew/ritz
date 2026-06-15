@@ -24,12 +24,10 @@ jobs:
         include:
           # Linux x86_64
           - { os: ubuntu-latest,   target: x86_64-unknown-linux-gnu,  manylinux: auto, cross_deps: '' }
-          # Linux arm64（native ARM runner；2025 起公开仓库免费，避免 cross-compile + qemu 的坑）
-          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, manylinux: auto, cross_deps: '' }
+          # Linux arm64（native ARM runner；manylinux=off 走 native build，绕开 Docker manylinux 容器在 arm64 runner 上失败的问题）
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, manylinux: 'off', cross_deps: '' }
           # macOS arm64（Apple Silicon runner）
           - { os: macos-14,        target: aarch64-apple-darwin,      manylinux: '',   cross_deps: '' }
-          # macOS x86_64（Intel runner；可用性偶尔不稳定，靠 continue-on-error 兜底）
-          - { os: macos-13,        target: x86_64-apple-darwin,       manylinux: '',   cross_deps: '' }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

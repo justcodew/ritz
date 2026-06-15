@@ -10,7 +10,7 @@ description = "Safe RAII wrapper around MuPDF"
 name = "mupdf"
 
 [dependencies]
-mupdf-sys = { path = "../mupdf-sys", version = "0.4.3" }
+mupdf-sys = { path = "../mupdf-sys", version = "0.4.4" }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

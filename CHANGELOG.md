@@ -30,6 +30,35 @@
 
 ---
 
+## [0.4.4] - 2026-06-15
+
+### Fixed — Linux arm64 + macOS Intel 卡 publish 的两个问题
+
+v0.4.3 在 ubuntu-24.04-arm（native ARM runner）上仍失败：maturin-action 默认
+通过 Docker manylinux 容器构建 wheel，但该容器在 arm64 runner 上 `docker failed
+with exit code 1`。同时 macos-13 job 永远 queued，`publish: needs: build` 被卡死
+（`continue-on-error: true` + `if: always()` 不能绕过 matrix 里 *未完成* 的 job）。
+
+### 改动
+
+- **Linux arm64 用 `manylinux: off` 走 native build**：绕开 Docker manylinux 容器
+  在 arm64 runner 上的失败。代价：wheel tag 从 `manylinux_*_aarch64` 退化为
+  `linux_aarch64`，要求用户 glibc >= 2.39（Ubuntu 24.04+）。现代 ARM Linux 系统
+  基本都满足。后续可调研修复 Docker 路径，恢复 manylinux_2_28 兼容。
+- **matrix 再次移除 macos-13**：Intel macOS runner 持续短缺，queued 状态会卡死
+  整个 publish。Intel Mac 用户暂不可用（占比极低，Intel Mac 已停产）。
+
+### 覆盖矩阵（v0.4.4 发布后）
+
+| 平台 | Python | wheel |
+|------|--------|-------|
+| macOS arm64 | 3.9-3.13 | `cp39-abi3-macosx_11_0_arm64.whl` |
+| Linux x86_64 | 3.9-3.13 | `cp39-abi3-manylinux_2_17_x86_64.whl` |
+| Linux arm64 | 3.9-3.13 | `cp39-abi3-linux_aarch64.whl`（manylinux=off，需 glibc 2.39+） |
+| macOS x86_64 | — | 暂不支持（macos-13 runner 短缺） |
+
+---
+
 ## [0.4.3] - 2026-06-15
 
 ### Fixed — Linux arm64 wheel 构建失败
