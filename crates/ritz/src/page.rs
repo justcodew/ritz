@@ -9,9 +9,8 @@ use mupdf_sys::{
     mupdf_safe_set_annot_rect,
     mupdf_safe_load_links, mupdf_safe_new_stext_page, mupdf_safe_page_rotation,
     mupdf_safe_render_pixmap, mupdf_safe_search_stext_page, mupdf_safe_stext_to_blocks,
-    mupdf_safe_stext_to_dict, mupdf_safe_stext_to_html, mupdf_safe_stext_to_json,
-    mupdf_safe_stext_to_text, mupdf_safe_stext_to_words, mupdf_safe_stext_to_xml,
-    mupdf_safe_stext_to_xhtml, fz_pixmap, fz_stext_page,
+    mupdf_safe_stext_to_dict, mupdf_safe_stext_to_json, mupdf_safe_stext_to_words,
+    fz_pixmap, fz_stext_page,
 };
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -25,9 +24,12 @@ use std::sync::OnceLock;
 /// 安全性：Page 持有 `Py<PyDocument>` 引用计数，确保 Document 不会先于 Page 被 GC。
 /// Drop 顺序：raw_page 先 drop（借用 ctx），然后 doc_handle 释放引用（可能触发 Document GC）。
 ///
-/// 加速缓存（plan_v1 后 Tier 1 优化）：
+/// 加速缓存（plan_v1 后 Tier 1 优化 + Phase 6 stext 缓存）：
 /// - `raw_doc`：load_page 时一次性取，省去每次方法调用时 `doc_handle.bind(py).borrow()` 的开销
 /// - `rect_cache`：rect/width/height 三个 getter 共享一次 `fz_bound_page` 调用结果
+/// - `stext_cache`：fz_stext_page 在首次 get_text/search_for 时构建，复用到 annot 写操作。
+///   Mutex 而非 OnceLock 因为 annot 写操作要能 invalidate（OnceLock 无法 unset）。
+///   锁在 PyO3 调用期间持有，但 Python 单线程内无竞争，开销 ~0。
 #[pyclass(name = "Page")]
 pub struct PyPage {
     pub(crate) ctx: *mut fz_context,
@@ -39,6 +41,8 @@ pub struct PyPage {
     pub(crate) doc_handle: Py<PyDocument>,
     /// `fz_bound_page` 结果缓存。页面是不可变的，可安全缓存。
     rect_cache: OnceLock<(f32, f32, f32, f32)>,
+    /// `fz_stext_page` 缓存。annot 写操作必须 invalidate（stext 包含 annot 文本）。
+    stext_cache: std::sync::Mutex<Option<*mut fz_stext_page>>,
 }
 
 impl PyPage {
@@ -54,6 +58,7 @@ impl PyPage {
             raw_doc,
             doc_handle,
             rect_cache: OnceLock::new(),
+            stext_cache: std::sync::Mutex::new(None),
         }
     }
 
@@ -63,6 +68,28 @@ impl PyPage {
             let r = unsafe { mupdf_safe_bound_page(self.ctx, self.raw) };
             (r.x0, r.y0, r.x1, r.y1)
         })
+    }
+
+    /// 返回缓存的 fz_stext_page，首次访问时构建。annot 写操作调用 invalidate_stext 后会重建。
+    fn cached_stext(&self) -> PyResult<*mut fz_stext_page> {
+        let mut guard = self.stext_cache.lock().unwrap();
+        if let Some(stpage) = *guard {
+            return Ok(stpage);
+        }
+        let mut stpage: *mut fz_stext_page = ptr::null_mut();
+        let rc = unsafe { mupdf_safe_new_stext_page(self.ctx, self.raw, &mut stpage) };
+        if rc != 0 || stpage.is_null() {
+            return Err(PyDocument::last_error_pub());
+        }
+        *guard = Some(stpage);
+        Ok(stpage)
+    }
+
+    /// annot 写操作调用：丢掉 stext 缓存。stext 包含 annot 文本，写 annot 后必须重建。
+    fn invalidate_stext(&self) {
+        if let Some(stpage) = self.stext_cache.lock().unwrap().take() {
+            unsafe { mupdf_safe_drop_stext_page(self.ctx, stpage); }
+        }
     }
 }
 
@@ -116,13 +143,11 @@ impl PyPage {
     /// rawdict 将在后续补（含每个 char 的 bbox/origin）。
     #[pyo3(signature = (mode = "text"))]
     fn get_text(&self, py: Python<'_>, mode: &str) -> PyResult<Py<PyAny>> {
-        let mut stpage: *mut fz_stext_page = ptr::null_mut();
-        let rc = unsafe { mupdf_safe_new_stext_page(self.ctx, self.raw, &mut stpage) };
-        if rc != 0 || stpage.is_null() {
-            return Err(PyDocument::last_error_pub());
-        }
+        // Phase 6：stext 缓存复用，避免每次 get_text/search_for 重建 fz_stext_page。
+        // annot 写操作调用 invalidate_stext 后会重建。
+        let stpage = self.cached_stext()?;
 
-        let result = match mode {
+        match mode {
             "text" | "html" | "xhtml" | "xml" => self.stext_to_string(py, stpage, mode),
             "json" => self.stext_to_json(py, stpage, 1.0),
             "rawjson" => {
@@ -142,10 +167,7 @@ impl PyPage {
                 "unsupported text mode: '{}' (supported: text, html, xhtml, xml, json, rawjson, words, blocks, dict, rawdict)",
                 other
             ))),
-        };
-
-        unsafe { mupdf_safe_drop_stext_page(self.ctx, stpage) };
-        result
+        }
     }
 
     /// get_links() -> list[dict]
@@ -214,11 +236,8 @@ impl PyPage {
     /// 一次命中跨多行会产生多个 quad/rect。
     #[pyo3(signature = (needle, quads=false))]
     fn search_for(&self, py: Python<'_>, needle: &str, quads: bool) -> PyResult<Vec<Py<PyAny>>> {
-        let mut stpage: *mut fz_stext_page = ptr::null_mut();
-        let rc = unsafe { mupdf_safe_new_stext_page(self.ctx, self.raw, &mut stpage) };
-        if rc != 0 || stpage.is_null() {
-            return Err(PyDocument::last_error_pub());
-        }
+        // Phase 6：stext 缓存复用。get_text 后再 search_for 不重建 stext。
+        let stpage = self.cached_stext()?;
 
         let mut quads_ptr: *mut f32 = ptr::null_mut();
         let result = (|| -> PyResult<Vec<Py<PyAny>>> {
@@ -269,7 +288,6 @@ impl PyPage {
             Ok(out)
         })();
 
-        unsafe { mupdf_safe_drop_stext_page(self.ctx, stpage) };
         unsafe { mupdf_sys::mupdf_free(quads_ptr as *mut _) };
         result
     }
@@ -401,6 +419,7 @@ impl PyPage {
         contents: &str,
         author: &str,
     ) -> PyResult<()> {
+        self.invalidate_stext();
         let _ = self.create_annot_impl(8, &quads, &[color.0, color.1, color.2], 3, contents, author)?;
         Ok(())
     }
@@ -414,6 +433,7 @@ impl PyPage {
         contents: &str,
         author: &str,
     ) -> PyResult<()> {
+        self.invalidate_stext();
         let _ = self.create_annot_impl(9, &quads, &[color.0, color.1, color.2], 3, contents, author)?;
         Ok(())
     }
@@ -427,6 +447,7 @@ impl PyPage {
         contents: &str,
         author: &str,
     ) -> PyResult<()> {
+        self.invalidate_stext();
         let _ = self.create_annot_impl(11, &quads, &[color.0, color.1, color.2], 3, contents, author)?;
         Ok(())
     }
@@ -442,6 +463,7 @@ impl PyPage {
         color: (f32, f32, f32),
         author: &str,
     ) -> PyResult<()> {
+        self.invalidate_stext();
         // Text 注释用 rect 定位，不需要 quads
         let color_arr = [color.0, color.1, color.2];
         let idx = self.create_annot_impl(
@@ -468,6 +490,7 @@ impl PyPage {
     ///
     /// 删除指定索引的注释。
     fn delete_annot(&self, index: i32) -> PyResult<()> {
+        self.invalidate_stext();
         let rc = unsafe {
             mupdf_safe_delete_annot(self.ctx, self.raw_doc, self.raw, index)
         };
@@ -646,24 +669,30 @@ impl PyPage {
         stpage: *mut fz_stext_page,
         mode: &str,
     ) -> PyResult<Py<PyAny>> {
-        let mut ptr: *mut c_char = ptr::null_mut();
+        // Phase 6 #2：用借用版 buffer（fz_buffer_data，0 拷贝），省下 fz_buffer_extract 的
+        // malloc+memcpy。data 仅在 release_buffer 之前有效。
+        let mode_id: c_int = match mode {
+            "text" => 0,
+            "html" => 1,
+            "xhtml" => 2,
+            "xml" => 3,
+            _ => unreachable!(),
+        };
+        let mut data: *const c_char = ptr::null();
         let mut len: usize = 0;
+        let mut handle: *mut std::ffi::c_void = ptr::null_mut();
         let rc = unsafe {
-            match mode {
-                "text" => mupdf_safe_stext_to_text(self.ctx, stpage, &mut ptr, &mut len),
-                "html" => mupdf_safe_stext_to_html(self.ctx, stpage, &mut ptr, &mut len),
-                "xhtml" => mupdf_safe_stext_to_xhtml(self.ctx, stpage, &mut ptr, &mut len),
-                "xml" => mupdf_safe_stext_to_xml(self.ctx, stpage, &mut ptr, &mut len),
-                _ => unreachable!(),
-            }
+            mupdf_sys::mupdf_safe_stext_to_buffer_borrow(
+                self.ctx, stpage, mode_id, &mut data, &mut len, &mut handle,
+            )
         };
         if rc != 0 {
             return Err(PyDocument::last_error_pub());
         }
-        let py_str = cbuf_to_pystring(py, ptr, len)?;
-        if !ptr.is_null() {
-            unsafe { mupdf_sys::mupdf_free(ptr as *mut _) };
-        }
+        // 借用 data 构造 PyString（拷贝到 Python heap，data 不再被引用）
+        let py_str = unsafe { cbuf_borrowed_to_pystring(py, data, len)? };
+        // 现在可以释放 buf（data 失效）
+        unsafe { mupdf_sys::mupdf_safe_release_buffer(self.ctx, handle); }
         Ok(py_str.into_any().unbind())
     }
 
@@ -951,13 +980,39 @@ impl PyPage {
     }
 }
 
+/// 字节 slice → PyString 的共享快速路径。
+///
+/// Phase 6 #3：release build 跳过 UTF-8 校验（MuPDF fz_print_stext_page_* 输出保证 UTF-8）。
+/// debug build 保留校验 + lossy fallback，便于 corrupt PDF 触发 bug 时定位。
+fn slice_to_pystring<'py>(
+    py: Python<'py>,
+    slice: &[u8],
+) -> PyResult<Bound<'py, PyString>> {
+    if slice.is_empty() {
+        return Ok(PyString::new(py, ""));
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        // SAFETY: MuPDF stext 输出保证 UTF-8。
+        let s = unsafe { std::str::from_utf8_unchecked(slice) };
+        Ok(PyString::new(py, s))
+    }
+    #[cfg(debug_assertions)]
+    {
+        match std::str::from_utf8(slice) {
+            Ok(s) => Ok(PyString::new(py, s)),
+            Err(_) => {
+                let lossy = String::from_utf8_lossy(slice);
+                Ok(PyString::new(py, &lossy))
+            }
+        }
+    }
+}
+
 /// C 字节缓冲 → PyString 的快速路径。
 ///
 /// Tier 2 #8 优化：替换原先的 `cbuf_to_string`（`String::from_utf8_lossy + into_owned`）
 /// + `into_pyobject`，省一次堆分配 + 一次拷贝。
-///
-/// 安全：MuPDF 输出本就是 UTF-8。但为防 corrupt PDF，先 `std::str::from_utf8` 校验
-/// （零拷贝、返回 Result），失败时回退到 lossy（与旧行为一致）。
 fn cbuf_to_pystring<'py>(
     py: Python<'py>,
     ptr: *const c_char,
@@ -967,15 +1022,24 @@ fn cbuf_to_pystring<'py>(
         return Ok(PyString::new(py, ""));
     }
     let slice = unsafe { std::slice::from_raw_parts(ptr as *const u8, len) };
-    // Fast path：合法 UTF-8 → 单次拷贝构造 PyString
-    match std::str::from_utf8(slice) {
-        Ok(s) => Ok(PyString::new(py, s)),
-        Err(_) => {
-            // Slow path：corrupt PDF 触发，lossy 替换。仍只构造一次 PyString。
-            let lossy = String::from_utf8_lossy(slice);
-            Ok(PyString::new(py, &lossy))
-        }
+    slice_to_pystring(py, slice)
+}
+
+/// Phase 6 #2：借用版 cbuf → PyString。与 cbuf_to_pystring 共用 slice_to_pystring，
+/// 区别是这里**不调用 mupdf_free**（buffer 由 mupdf_safe_release_buffer 显式释放）。
+///
+/// # Safety
+/// data 必须在 caller 调用 mupdf_safe_release_buffer 之前消费完。
+unsafe fn cbuf_borrowed_to_pystring<'py>(
+    py: Python<'py>,
+    ptr: *const c_char,
+    len: usize,
+) -> PyResult<Bound<'py, PyString>> {
+    if ptr.is_null() || len == 0 {
+        return Ok(PyString::new(py, ""));
     }
+    let slice = std::slice::from_raw_parts(ptr as *const u8, len);
+    slice_to_pystring(py, slice)
 }
 
 impl PyPage {
@@ -1015,6 +1079,10 @@ impl PyPage {
 
 impl Drop for PyPage {
     fn drop(&mut self) {
+        // Phase 6：释放 stext 缓存（如果已构建）。drop 顺序：stext → page。
+        if let Some(stpage) = self.stext_cache.lock().unwrap().take() {
+            unsafe { mupdf_safe_drop_stext_page(self.ctx, stpage); }
+        }
         unsafe {
             if !self.raw.is_null() {
                 mupdf_safe_drop_page(self.ctx, self.raw);

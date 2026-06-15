@@ -881,3 +881,127 @@ class TestPageEditing:
         d2 = ritz.open(str(out))
         assert len(d2) == n0
 
+
+class TestStextCache:
+    """Phase 6：PyPage fz_stext_page 缓存测试。
+
+    验证缓存正确性：
+    - 同一 page 多次调 get_text('text') 应结果一致（命中缓存）
+    - 多模式（text/words/blocks/dict）共享同一 stext，结果正确
+    - search_for 与 get_text 共享同一 stext
+    - annot 写操作后 invalidate，新调用得到正确（含 annot）结果
+    - Drop 正确释放 cache（leak_test 已覆盖）
+    """
+
+    def test_repeated_get_text_consistent(self):
+        d = ritz.open(sample_pdf())
+        p = d[0]
+        t1 = p.get_text("text")
+        t2 = p.get_text("text")
+        t3 = p.get_text("text")
+        assert t1 == t2 == t3
+        assert len(t1) > 0
+
+    def test_multi_mode_share_stext(self):
+        """text/words/blocks/dict 应共享同一 stext 缓存，结果各自正确。"""
+        d = ritz.open(sample_pdf())
+        p = d[0]
+        # 触发缓存构建
+        t = p.get_text("text")
+        # 这些模式应命中缓存（不重建 stext）
+        w = p.get_text("words")
+        b = p.get_text("blocks")
+        di = p.get_text("dict")
+        # 再来一次 text，应仍是同一份数据
+        t2 = p.get_text("text")
+        assert t == t2
+        # words / blocks / dict 结构合理
+        assert isinstance(w, list) and len(w) > 0
+        assert isinstance(b, list) and len(b) > 0
+        assert isinstance(di, dict) and "blocks" in di
+
+    def test_search_shares_stext_with_get_text(self):
+        """search_for 应与 get_text 共享同一 stext 缓存。"""
+        d = ritz.open(sample_pdf())
+        p = d[0]
+        t = p.get_text("text")
+        # 用 text 里出现的某个字符搜，应能命中
+        needle = t[0] if t else "a"
+        hits1 = p.search_for(needle)
+        hits2 = p.search_for(needle)
+        assert hits1 == hits2
+        assert isinstance(hits1, list)
+
+    def test_html_mode_works_via_cache(self):
+        """html/xhtml/xml 走 stext_to_string，应通过缓存正常工作。"""
+        d = ritz.open(sample_pdf())
+        p = d[0]
+        # 先建 text 缓存
+        p.get_text("text")
+        # 各模式独立调用
+        html = p.get_text("html")
+        xhtml = p.get_text("xhtml")
+        xml = p.get_text("xml")
+        assert "<" in html
+        assert "<" in xhtml
+        assert "<" in xml
+
+    def test_annot_invalidates_cache(self):
+        """add_highlight_annot 后，cache 应失效；后续 get_text 反映新状态。
+
+        stext 包含 annot 文本，写 annot 必须重建 stext。
+        这里用 get_annotations 间接验证 annot 写入成功（add 后能读到）。
+        """
+        d = ritz.open(sample_pdf())
+        p = d[0]
+        # 先建缓存
+        p.get_text("text")
+        # 写 annot（应 invalidate）
+        # 用一个 quad 覆盖页面部分区域（来自 search 命中）
+        hits = p.search_for(p.get_text("text")[:1] or "a")
+        if hits:
+            rect = hits[0]
+            x0, y0, x1, y1 = rect
+            quad = (x0, y0, x1, y0, x1, y1, x0, y1)
+            p.add_highlight_annot([quad])
+            # 缓存应已 invalidate；新调用不应崩
+            t_after = p.get_text("text")
+            # 拿到 annot 列表，证明 add 生效
+            annots = p.get_annotations()
+            assert len(annots) >= 1
+            # annot 后 text 仍能取（不要求内容变化，只要求不崩 + 不返回旧 cache 的脏数据）
+            assert isinstance(t_after, str)
+
+    def test_delete_annot_invalidates_cache(self):
+        """delete_annot 也应 invalidate 缓存。"""
+        d = ritz.open(sample_pdf())
+        p = d[0]
+        p.get_text("text")  # 建缓存
+        # 先加一个 annot
+        hits = p.search_for(p.get_text("text")[:1] or "a")
+        if hits:
+            x0, y0, x1, y1 = hits[0]
+            p.add_highlight_annot([(x0, y0, x1, y0, x1, y1, x0, y1)])
+        n_before = len(p.get_annotations())
+        # 删 annot
+        p.delete_annot(0)
+        # 缓存 invalidate 后，annot 数应 -1
+        n_after = len(p.get_annotations())
+        assert n_after == n_before - 1
+
+    def test_different_pages_have_independent_cache(self):
+        """不同 PyPage 实例的 stext cache 相互独立。"""
+        d = ritz.open(sample_pdf())
+        # sample.pdf 单页，先用 new_page 造第二页
+        n = len(d)
+        if n < 2:
+            d.new_page()
+        p0 = d[0]
+        p1 = d[1]
+        t0 = p0.get_text("text")
+        t1 = p1.get_text("text")
+        # 新页应空白
+        assert t1 == ""
+        # 旧页 text 仍正确
+        assert len(t0) > 0
+

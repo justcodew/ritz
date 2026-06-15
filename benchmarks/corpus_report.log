@@ -87,23 +87,105 @@ unsupported error: cannot create appearance stream for Screen annotations
 unsupported error: cannot create appearance stream for Screen annotations
 unsupported error: cannot create appearance stream for Screen annotations
 unsupported error: cannot create appearance stream for Screen annotations
-ritz corpus benchmark | libs=['ritz', 'pymupdf'] | max=None
-=== 下载 corpus ===
-  ↓ cloning pdfjs ...
-    ✗ clone pdfjs failed: Command '['git', 'clone', '--depth', '1', 'https://github.com/mozilla/pdf.js.git', '/Users/xiongzhaolong/Downloads/claude-pro/202604-job/pdf_pro/ritz/benchmarks/corpus/pdfjs']' returned non-zero exit status 128.
-  ↓ cloning verapdf ...
-    ✓ 2907 PDFs
-  ↓ cloning safedocs ...
-    ✗ clone safedocs failed: Command '['git', 'clone', '--depth', '1', 'https://github.com/pdf-association/safedocs.git', '/Users/xiongzhaolong/Downloads/claude-pro/202604-job/pdf_pro/ritz/benchmarks/corpus/safedocs']' returned non-zero exit status 128.
+syntax error: invalid ICC colorspace
+unsupported error: cannot create appearance stream for RichMedia annotations
+unsupported error: cannot create appearance stream for RichMedia annotations
+unsupported error: cannot create appearance stream for 3D annotations
+unsupported error: cannot create appearance stream for 3D annotations
+syntax error: unknown keyword: 'UnknownOP'
+format error: cmsOpenProfileFromMem failed
+unsupported error: cannot create appearance stream for Movie annotations
+unsupported error: cannot create appearance stream for Movie annotations
+unsupported error: cannot create appearance stream for Movie annotations
+unsupported error: cannot create appearance stream for Movie annotations
+unsupported error: cannot create appearance stream for Movie annotations
+unsupported error: cannot create appearance stream for Movie annotations
+unsupported error: cannot create appearance stream for Movie annotations
+unsupported error: cannot create appearance stream for Movie annotations
+unsupported error: cannot create appearance stream for Movie annotations
+unsupported error: cannot create appearance stream for Movie annotations
+library error: FT_New_Memory_Face(RKAJXV+ArialMT): unknown file format
+library error: FT_New_Memory_Face(LuciduxSans-Oblique): unknown file format
+library error: FT_New_Memory_Face(QFOGKX+ArialMT): unknown file format
+format error: expected trailer marker
+format error: no builtin cmap file: Adobe-Korea1-2
+format error: no builtin cmap file: Adobe-Korea1-2
+unsupported error: cannot create appearance stream for Screen annotations
+unsupported error: cannot create appearance stream for Screen annotations
+unsupported error: cannot create appearance stream for PrinterMark annotations
+unsupported error: cannot create appearance stream for PrinterMark annotations
+unsupported error: cannot create appearance stream for Watermark annotations
+unsupported error: cannot create appearance stream for Watermark annotations
+unsupported error: cannot create appearance stream for TrapNet annotations
+unsupported error: cannot create appearance stream for TrapNet annotations
+unsupported error: cannot create appearance stream for Movie annotations
+unsupported error: cannot create appearance stream for Movie annotations
+unsupported error: cannot create appearance stream for 3D annotations
+unsupported error: cannot create appearance stream for 3D annotations
+syntax error: unknown keyword: 'UnknownOperator'
+syntax error: unknown keyword: 'UnknownOperator'
+library error: zlib error: incorrect header check
+format error: cmsOpenProfileFromMem failed
+format error: object is not a stream
+format error: no builtin cmap file: Adobe-Korea1-2
+syntax error: expected object number
+format error: cmsOpenProfileFromMem failed
+format error: cannot recognize xref format
+syntax error: stack overflow
+syntax error: stack overflow
+syntax error: stack overflow
+syntax error: stack overflow
+syntax error: stack overflow
+syntax error: stack overflow
+syntax error: stack overflow
+format error: expected trailer marker
+format error: expected trailer marker
+unsupported error: cannot create appearance stream for PrinterMark annotations
+unsupported error: cannot create appearance stream for PrinterMark annotations
+unsupported error: cannot create appearance stream for Watermark annotations
+unsupported error: cannot create appearance stream for Watermark annotations
+unsupported error: cannot create appearance stream for Screen annotations
+unsupported error: cannot create appearance stream for Screen annotations
+unsupported error: cannot create appearance stream for Projection annotations
+unsupported error: cannot create appearance stream for Projection annotations
+unsupported error: cannot create appearance stream for Projection annotations
+unsupported error: cannot create appearance stream for Projection annotations
+syntax error: unknown keyword: 'UnknownOperator'
+syntax error: unknown keyword: 'UnknownOperator'
+syntax error: cannot find ColorSpace resource 'CS0'
+syntax error: cannot find XObject resource 'X0'
+library error: zlib error: incorrect header check
+format error: cmsOpenProfileFromMem failed
+format error: no builtin cmap file: Adobe-Japan1-2
+syntax error: expected object number
+syntax error: syntax error in content stream
+syntax error: unknown keyword: '6��T�4�@'
+syntax error: syntax error in content stream
+syntax error: syntax error in content stream
+format error: no builtin cmap file: Adobe-Korea1-2
+format error: no builtin cmap file: Adobe-Korea1-2
+unsupported error: cannot create appearance stream for TrapNet annotations
+unsupported error: cannot create appearance stream for TrapNet annotations
+unsupported error: cannot create appearance stream for Screen annotations
+unsupported error: cannot create appearance stream for Screen annotations
+unsupported error: cannot create appearance stream for Screen annotations
+unsupported error: cannot create appearance stream for Screen annotations
+unsupported error: cannot create appearance stream for Screen annotations
+unsupported error: cannot create appearance stream for Screen annotations
+unsupported error: cannot create appearance stream for Screen annotations
+unsupported error: cannot create appearance stream for Screen annotations
+unsupported error: cannot create appearance stream for Screen annotations
+unsupported error: cannot create appearance stream for Screen annotations
+ritz corpus benchmark | libs=['ritz', 'ritz_batch', 'pymupdf'] | max=None
 === 收集到 2907 个 PDF ===
 === 跑 ritz ===
   [200/2907] elapsed=0.3s pass_rate=100.0%
   [400/2907] elapsed=0.6s pass_rate=100.0%
-  [600/2907] elapsed=0.9s pass_rate=100.0%
-  [800/2907] elapsed=1.1s pass_rate=100.0%
+  [600/2907] elapsed=0.8s pass_rate=100.0%
+  [800/2907] elapsed=1.0s pass_rate=100.0%
   [1000/2907] elapsed=1.3s pass_rate=100.0%
   [1200/2907] elapsed=1.4s pass_rate=100.0%
-  [1400/2907] elapsed=1.5s pass_rate=100.0%
+  [1400/2907] elapsed=1.4s pass_rate=100.0%
   [1600/2907] elapsed=1.6s pass_rate=100.0%
   [1800/2907] elapsed=1.8s pass_rate=100.0%
   [2000/2907] elapsed=1.9s pass_rate=100.0%
@@ -111,16 +193,31 @@ ritz corpus benchmark | libs=['ritz', 'pymupdf'] | max=None
   [2400/2907] elapsed=2.3s pass_rate=100.0%
   [2600/2907] elapsed=2.5s pass_rate=100.0%
   [2800/2907] elapsed=2.8s pass_rate=100.0%
+=== 跑 ritz_batch ===
+  [200/2907] elapsed=0.2s pass_rate=100.0%
+  [400/2907] elapsed=0.5s pass_rate=100.0%
+  [600/2907] elapsed=0.7s pass_rate=100.0%
+  [800/2907] elapsed=0.9s pass_rate=100.0%
+  [1000/2907] elapsed=1.1s pass_rate=100.0%
+  [1200/2907] elapsed=1.2s pass_rate=100.0%
+  [1400/2907] elapsed=1.3s pass_rate=100.0%
+  [1600/2907] elapsed=1.3s pass_rate=100.0%
+  [1800/2907] elapsed=1.6s pass_rate=100.0%
+  [2000/2907] elapsed=1.7s pass_rate=100.0%
+  [2200/2907] elapsed=1.8s pass_rate=100.0%
+  [2400/2907] elapsed=2.0s pass_rate=100.0%
+  [2600/2907] elapsed=2.2s pass_rate=100.0%
+  [2800/2907] elapsed=2.4s pass_rate=100.0%
 === 跑 pymupdf ===
   [200/2907] elapsed=0.2s pass_rate=100.0%
   [400/2907] elapsed=0.7s pass_rate=100.0%
   [600/2907] elapsed=0.8s pass_rate=100.0%
   [800/2907] elapsed=1.0s pass_rate=100.0%
-  [1000/2907] elapsed=1.0s pass_rate=100.0%
+  [1000/2907] elapsed=1.1s pass_rate=100.0%
   [1200/2907] elapsed=1.1s pass_rate=100.0%
   [1400/2907] elapsed=1.2s pass_rate=100.0%
-  [1600/2907] elapsed=1.2s pass_rate=100.0%
-  [1800/2907] elapsed=1.3s pass_rate=100.0%
+  [1600/2907] elapsed=1.3s pass_rate=100.0%
+  [1800/2907] elapsed=1.4s pass_rate=100.0%
   [2000/2907] elapsed=1.4s pass_rate=100.0%
   [2200/2907] elapsed=1.5s pass_rate=100.0%
   [2400/2907] elapsed=1.6s pass_rate=100.0%
@@ -131,8 +228,10 @@ ritz corpus benchmark | libs=['ritz', 'pymupdf'] | max=None
 ======================================================================
 | Library | Mean | p50 | p95 | p99 | Pass Rate | Count |
 |---|---|---|---|---|---|---|
-| ritz | 1.0ms | 0.4ms | 3.3ms | 4.2ms | 100.0% | 2907/2907 |
-| pymupdf | 0.6ms | 0.3ms | 2.1ms | 3.3ms | 100.0% | 2907/2907 |
+| ritz | 1.0ms | 0.5ms | 3.3ms | 4.3ms | 100.0% | 2907/2907 |
+| ritz_batch | 0.9ms | 0.3ms | 2.7ms | 3.6ms | 100.0% | 2907/2907 |
+| pymupdf | 0.7ms | 0.3ms | 2.1ms | 3.4ms | 100.0% | 2907/2907 |
 详细：
-  ritz: mean=0.99ms p50=0.45 p95=3.25 p99=4.25 pass=2907/2907 (100.00%) fail=0 timeout=0
-  pymupdf: mean=0.65ms p50=0.29 p95=2.08 p99=3.31 pass=2907/2907 (100.00%) fail=0 timeout=0
+  ritz: mean=0.99ms p50=0.45 p95=3.27 p99=4.31 pass=2907/2907 (100.00%) fail=0 timeout=0
+  ritz_batch: mean=0.86ms p50=0.35 p95=2.74 p99=3.61 pass=2907/2907 (100.00%) fail=0 timeout=0
+  pymupdf: mean=0.66ms p50=0.29 p95=2.06 p99=3.36 pass=2907/2907 (100.00%) fail=0 timeout=0

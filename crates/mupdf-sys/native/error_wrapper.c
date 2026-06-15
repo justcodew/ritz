@@ -337,6 +337,74 @@ static int stext_to_buffer(fz_context *ctx, fz_stext_page *stpage,
     return 0;
 }
 
+/*
+ * Phase 6 优化版：借用版 stext 输出。
+ *
+ * 与 stext_to_buffer 的区别：
+ *   - 用 fz_buffer_data 借用 buf 内部 storage（无 malloc、无 memcpy）
+ *   - 不释放 buf，交由 caller 通过 mupdf_safe_release_buffer(handle) 显式释放
+ *   - data 仅在 release 之前有效；release 后访问 = UAF
+ *
+ * 用法（Rust 端）：
+ *   mupdf_safe_stext_to_buffer_borrow(ctx, stpage, mode_id, &data, &len, &handle);
+ *   ... 用 data 构造 PyString（拷贝到 Python heap）...
+ *   mupdf_safe_release_buffer(ctx, handle);   // 释放 buf，data 失效
+ *
+ * mode_id: 0=text, 1=html, 2=xhtml, 3=xml
+ */
+int mupdf_safe_stext_to_buffer_borrow(fz_context *ctx, fz_stext_page *stpage,
+                                       int mode_id,
+                                       const char **out_data, size_t *out_len,
+                                       void **out_handle) {
+    if (!ctx || !stpage || !out_data || !out_len || !out_handle) return -1;
+    *out_data = NULL;
+    *out_len = 0;
+    *out_handle = NULL;
+
+    stext_print_fn print_fn;
+    switch (mode_id) {
+        case 0: print_fn = text_print_wrapper; break;
+        case 1: print_fn = fz_print_stext_page_as_html; break;
+        case 2: print_fn = fz_print_stext_page_as_xhtml; break;
+        case 3: print_fn = fz_print_stext_page_as_xml; break;
+        default: return -1;
+    }
+
+    fz_buffer *buf = NULL;
+    fz_output *stm = NULL;
+    unsigned char *data = NULL;
+    size_t len = 0;
+
+    mupdf_clear_error();
+    fz_try(ctx) {
+        buf = fz_new_buffer(ctx, 256);
+        stm = fz_new_output_with_buffer(ctx, buf);
+        print_fn(ctx, stm, stpage, 0);
+        fz_close_output(ctx, stm);
+        len = fz_buffer_storage(ctx, buf, &data); /* 借用 buf 内部 storage，0 拷贝 */
+    }
+    fz_always(ctx) {
+        fz_drop_output(ctx, stm);
+        /* buf 不在这里 drop，交给 caller */
+    }
+    fz_catch(ctx) {
+        set_error("stext output borrow: %s", fz_caught_message(ctx));
+        fz_drop_buffer(ctx, buf); /* 失败路径才 drop */
+        return -1;
+    }
+
+    *out_data = (const char *)data;
+    *out_len = len;
+    *out_handle = (void *)buf;
+    return 0;
+}
+
+void mupdf_safe_release_buffer(fz_context *ctx, void *handle) {
+    if (ctx && handle) {
+        fz_drop_buffer(ctx, (fz_buffer *)handle);
+    }
+}
+
 int mupdf_safe_stext_to_text(fz_context *ctx, fz_stext_page *stpage,
                              char **out, size_t *out_len) {
     return stext_to_buffer(ctx, stpage, text_print_wrapper, out, out_len);

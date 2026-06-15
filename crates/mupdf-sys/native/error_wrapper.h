@@ -67,6 +67,15 @@ int mupdf_safe_stext_to_xml(fz_context *ctx, fz_stext_page *stpage,
                             char **out, size_t *out_len);
 int mupdf_safe_stext_to_xhtml(fz_context *ctx, fz_stext_page *stpage,
                               char **out, size_t *out_len);
+/* Phase 6 借用版：用 fz_buffer_data 取 buf 内部 storage（0 拷贝）。
+ * data 仅在 mupdf_safe_release_buffer(handle) 之前有效。
+ * mode_id: 0=text, 1=html, 2=xhtml, 3=xml */
+int mupdf_safe_stext_to_buffer_borrow(fz_context *ctx, fz_stext_page *stpage,
+                                       int mode_id,
+                                       const char **out_data, size_t *out_len,
+                                       void **out_handle);
+/* 释放 mupdf_safe_stext_to_buffer_borrow 返回的 handle。data 同时失效。 */
+void mupdf_safe_release_buffer(fz_context *ctx, void *handle);
 /* json: scale 是坐标缩放因子（PyMuPDF 用 1.0） */
 int mupdf_safe_stext_to_json(fz_context *ctx, fz_stext_page *stpage, float scale,
                              char **out, size_t *out_len);

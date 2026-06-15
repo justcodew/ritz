@@ -37336,6 +37336,22 @@ extern "C" {
     ) -> ::std::os::raw::c_int;
 }
 extern "C" {
+    pub fn mupdf_safe_stext_to_buffer_borrow(
+        ctx: *mut fz_context,
+        stpage: *mut fz_stext_page,
+        mode_id: ::std::os::raw::c_int,
+        out_data: *mut *const ::std::os::raw::c_char,
+        out_len: *mut usize,
+        out_handle: *mut *mut ::std::os::raw::c_void,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn mupdf_safe_release_buffer(
+        ctx: *mut fz_context,
+        handle: *mut ::std::os::raw::c_void,
+    );
+}
+extern "C" {
     pub fn mupdf_safe_stext_to_json(
         ctx: *mut fz_context,
         stpage: *mut fz_stext_page,

@@ -30,6 +30,53 @@
 
 ---
 
+## [0.4.0] - 2026-06-15
+
+Phase 6：文本提取热路径性能优化。针对 corpus benchmark 显示的 ritz vs PyMuPDF
+~50% 单文档差距，定位 3 个开销点并修复。
+
+### Performance — 文本提取热路径
+
+- **PyPage `fz_stext_page` 缓存**：`stext_cache: Mutex<Option<*mut fz_stext_page>>`。
+  同一 page 多次 get_text / search_for 共享同一 stext，不重建。
+  annot 写操作（add_highlight/underline/strikeout/text_annot + delete_annot）调用
+  invalidate_stext，确保 stext 包含 annot 文本这一不变量。
+- **借用版 stext 输出**：`mupdf_safe_stext_to_buffer_borrow` 用 `fz_buffer_storage`
+  借用 buf 内部 storage，省下 `fz_buffer_extract` 的 malloc + memcpy。
+- **release build 跳过 UTF-8 校验**：`slice_to_pystring` 用 `from_utf8_unchecked`
+  （MuPDF stext 输出保证 UTF-8）。debug build 保留校验 + lossy fallback。
+
+### 实测收益
+
+| 场景 | 优化前 | 优化后 | 加速 |
+|------|--------|--------|------|
+| 多模式同页（text+words+blocks+dict） | 0.675 ms/轮 | **0.009 ms/轮** | **71.9x** |
+| 单模式 text 同页重复 | 0.130 ms/轮 | **0.001 ms/轮** | **169x** |
+| corpus 单文档（cache 不触发） | 1.0ms | ~1.0ms（无显著变化，瓶颈在 MuPDF 内部）| — |
+
+详见 [docx/16-phase6-stext-perf.md](docx/16-phase6-stext-perf.md) 和
+[benchmarks/bench_multimode.py](benchmarks/bench_multimode.py)。
+
+### Added
+
+- `benchmarks/bench_corpus.py` 新增 `ritz_batch` 模式（用 `get_text_batch` 1 次 FFI 拿全部页文本）
+- `benchmarks/bench_multimode.py` 新建：多模式同页对比脚本
+
+### Changed
+
+- `PyPage` 新增 `stext_cache: Mutex<Option<*mut fz_stext_page>>` 字段
+- `crates/mupdf-sys/native/error_wrapper.c` 新增 2 个 C 函数（borrow + release_buffer）
+- `crates/ritz/src/page.rs::stext_to_string` 切换到 borrow 路径
+- 5 个 annot 写方法开头加 `invalidate_stext()`
+- `Drop for PyPage` 释放 stext_cache
+
+### Documentation
+
+- 新增 [docx/16-phase6-stext-perf.md](docx/16-phase6-stext-perf.md) — 完整 8 节设计文档
+- README.md corpus 对比表说明更新（指明 cache 是真实场景加速点）
+
+---
+
 ## [0.3.1] - 2026-06-15
 
 ### Fixed

@@ -192,7 +192,11 @@ def main():
         print("✗ 无 PDF。请检查 corpus/ 目录。")
         sys.exit(1)
 
-    extractors = {"ritz": extract_ritz, "pymupdf": extract_pymupdf}
+    extractors = {
+        "ritz": extract_ritz,
+        "ritz_batch": extract_ritz_batch,
+        "pymupdf": extract_pymupdf,
+    }
 
     all_results = {}
     for lib in libs:

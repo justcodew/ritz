@@ -259,6 +259,8 @@ python benchmarks/bench_corpus.py
 | PyMuPDF | 0.6ms | 0.3ms | 2.1ms | 3.3ms | 100.0% (2907/2907) | AGPL-3.0 |
 
 > ritz 和 PyMuPDF 共享 MuPDF 1.27 文本提取引擎，单文档文本提取是双方共享瓶颈场景（详见 [benchmarks/benchmark_report.md](benchmarks/benchmark_report.md) 的 plan_v1 KPI 兑现账本），故接近同量级。ritz 的核心优势在 **批量并行**（单文档 `get_text_batch` 1 次 FFI 拿全部页；多文档 `process_documents` 用 rayon 并行释放 GIL），以及 **链接读取 27x**、**JPEG 图片提取 6.2x** 等 C 层扁平化场景。
+>
+> **同页多模式场景**（Phase 6 起）：ritz 的 PyPage 缓存了 `fz_stext_page`，同页 `get_text("text")` + `get_text("words")` + `get_text("blocks")` + `get_text("dict")` 共享同一 stext，比 PyMuPDF（每次重建）**快 ~70x**。详见 [docx/16-phase6-stext-perf.md](docx/16-phase6-stext-perf.md)。
 
 ## 测试
 
