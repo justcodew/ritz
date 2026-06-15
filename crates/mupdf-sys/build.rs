@@ -135,6 +135,23 @@ fn build_mupdf(mupdf_dir: &std::path::Path) -> PathBuf {
         make.env("XCFLAGS", "-fPIC");
     }
 
+    // Cross-compile：把交叉工具链传给 MuPDF Makefile（通过 CC/LD/AR 环境变量）。
+    // host != target 时触发；native build 不受影响。
+    let target = env::var("TARGET").unwrap_or_default();
+    let host = env::var("HOST").unwrap_or_default();
+    if target != host && !target.is_empty() {
+        // Linux arm64 cross（x86_64 host → aarch64 target）
+        if target == "aarch64-unknown-linux-gnu" {
+            make.env("CC", "aarch64-linux-gnu-gcc");
+            make.env("LD", "aarch64-linux-gnu-ld");
+            make.env("AR", "aarch64-linux-gnu-ar");
+        }
+        // macOS x86_64 cross from arm64（备用方案，当前用 native macos-13 不触发）
+        else if target == "x86_64-apple-darwin" && host.starts_with("aarch64") {
+            make.env("ARCHFLAGS", "-arch x86_64");
+        }
+    }
+
     make.arg("libs"); // 只编译库，不编译 mudraw/mutool 等可执行文件
 
     let status = make
@@ -194,6 +211,13 @@ fn link_mupdf(release_dir: &std::path::Path) {
 /// 编译手写 C 包装层。
 fn compile_c_wrapper(manifest_dir: &std::path::Path, mupdf_dir: &std::path::Path) {
     let mut build = cc::Build::new();
+    // Cross-compile：显式传 target triple，cc crate 会自动用 CC_<target>
+    // 环境变量（如 CC_aarch64_unknown_linux_gnu）选正确的交叉编译器。
+    // native build 时 target == host，传或不传等价。
+    let target = env::var("TARGET").unwrap_or_default();
+    if !target.is_empty() {
+        build.target(&target);
+    }
     build
         .file(manifest_dir.join("native/error_wrapper.c"))
         .file(manifest_dir.join("native/mupdf_extensions.c"))

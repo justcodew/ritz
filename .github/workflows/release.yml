@@ -15,22 +15,32 @@ concurrency:
 jobs:
   build:
     name: build wheel (${{ matrix.target }})
+    # continue-on-error：单个 matrix 项失败（如 macos-13 runner 短缺超时）
+    # 不阻塞其他平台 wheel 上传。publish 用 if: always() 仍会发布成功的 wheel。
+    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Linux x86_64（manylinux auto 自动选最新 manylinux 镜像）
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, manylinux: auto }
+          # Linux x86_64
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu,  manylinux: auto, cross_deps: '' }
+          # Linux arm64（cross-compile from x86_64 runner）
+          - { os: ubuntu-latest, target: aarch64-unknown-linux-gnu, manylinux: auto, cross_deps: 'gcc-aarch64-linux-gnu' }
           # macOS arm64（Apple Silicon runner）
-          # 注：macos-13 (Intel runner) 经常短缺导致 publish job 永远卡在 queued，
-          # 已移除。Intel macOS 用户暂时不可用（Intel Mac 已停产）。后续如需 x86_64
-          # 支持，考虑 universal2 wheel 或 macos-14 cross-compile。
-          - { os: macos-14,      target: aarch64-apple-darwin,     manylinux: '' }
+          - { os: macos-14,      target: aarch64-apple-darwin,      manylinux: '',   cross_deps: '' }
+          # macOS x86_64（Intel runner；可用性偶尔不稳定，靠 continue-on-error 兜底）
+          - { os: macos-13,      target: x86_64-apple-darwin,       manylinux: '',   cross_deps: '' }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Install cross-compile toolchain
+        if: ${{ matrix.cross_deps != '' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.cross_deps }}
 
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
@@ -56,6 +66,11 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --out dist
           manylinux: ${{ matrix.manylinux || 'auto' }}
+        env:
+          # Linux arm64 cross：让 cc crate / MuPDF Makefile 找到交叉 gcc
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          LD_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ld
+          AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -85,7 +100,10 @@ jobs:
 
   publish:
     name: publish to PyPI
-    if: startsWith(github.ref, 'refs/tags/v')
+    # if: always() 让 publish 即使部分 build 失败/queued 也跑；
+    # 下载 artifact 时只拿到成功的 wheel（失败的 matrix 项不上传 artifact）。
+    # skip-existing: true 防止重复上传冲突。
+    if: startsWith(github.ref, 'refs/tags/v') && always()
     needs: build
     runs-on: ubuntu-latest
     environment: pypi
@@ -96,4 +114,13 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: Check wheels exist
+        run: |
+          ls -la dist/
+          if [ -z "$(ls dist/*.whl 2>/dev/null)" ]; then
+            echo "ERROR: no wheels uploaded — all build jobs failed"
+            exit 1
+          fi
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true

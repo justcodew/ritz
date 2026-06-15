@@ -30,6 +30,50 @@
 
 ---
 
+## [0.4.2] - 2026-06-15
+
+### Build — 扩展 PyPI wheel 覆盖
+
+v0.4.1 只发布了 macOS arm64 (cp312) + Linux x86_64 (cp39) 两个 wheel，
+Python 版本各只有一个，平台覆盖窄。本次大幅扩展：
+
+- **abi3 wheel**（`pyo3/abi3-py39` feature）：单个 wheel 覆盖 Python 3.9-3.13，
+  不再每个 Python 版本单独构建。wheel 命名从 `cp312-cp312` 变为 `cp39-abi3`。
+- **新增 Intel Mac (x86_64-apple-darwin)**：macos-13 native runner。
+- **新增 Linux arm64 (aarch64-unknown-linux-gnu)**：ubuntu-latest cross-compile，
+  装 `gcc-aarch64-linux-gnu`，build.rs 把 `CC_aarch64_unknown_linux_gnu` 传给 MuPDF Makefile + cc crate。
+- **publish 不阻塞**：build matrix 加 `continue-on-error: true`，publish job 用 `if: always()`。
+  macos-13 runner 短缺超时不再阻塞其他平台 wheel 发布。
+- `requires-python` 从 `>=3.8` 改为 `>=3.9`（与 abi3-py39 对齐）。
+- classifiers 加 Python 3.13，移除 3.8。
+
+### 覆盖矩阵（v0.4.2 发布后）
+
+| 平台 | Python | wheel |
+|------|--------|-------|
+| macOS arm64 | 3.9-3.13 | `cp39-abi3-macosx_11_0_arm64.whl` |
+| macOS x86_64 | 3.9-3.13 | `cp39-abi3-macosx_10_12_x86_64.whl` |
+| Linux x86_64 | 3.9-3.13 | `cp39-abi3-manylinux_2_17_x86_64.whl` |
+| Linux arm64 | 3.9-3.13 | `cp39-abi3-manylinux_2_17_aarch64.whl` |
+| Windows | — | 不支持（MuPDF 走 MSVC，未来单独加） |
+
+### Changed
+
+- `crates/ritz/Cargo.toml`：pyo3 features 加 `abi3-py39`
+- `crates/mupdf-sys/build.rs`：`build_mupdf` 检测 host != target 时传交叉 CC/LD/AR；
+  `compile_c_wrapper` 给 cc crate 显式传 `target`（native build 等价）
+- `.github/workflows/release.yml`：matrix 从 2 项扩到 4 项；加 cross-compile toolchain step；
+  build job 加 `continue-on-error`；publish 改 `if: always()` + 加 wheel 存在性检查
+- `pyproject.toml`：`requires-python` → `>=3.9`；classifiers 加 3.13、删 3.8
+
+### 风险与回退
+
+- Linux arm64 cross 首次启用，MuPDF Makefile 对 cross CC 的支持可能不完美。
+  若失败，build job `continue-on-error` 让其他平台照常发布；后续单独修。
+- abi3 模式首次启用，PyO3 有限 API 可能有意外。若本地编译失败，临时退回非 abi3。
+
+---
+
 ## [0.4.1] - 2026-06-15
 
 ### Fixed
