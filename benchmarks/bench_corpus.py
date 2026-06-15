@@ -99,6 +99,28 @@ def extract_ritz(path, timeout=TIMEOUT_S):
         return (elapsed, "fail" if elapsed < timeout else "timeout", 0)
 
 
+def extract_ritz_batch(path, timeout=TIMEOUT_S):
+    """ritz 独有：用 doc.get_text_batch() 一次性拿全部页文本（1 次 FFI）。
+
+    与 extract_ritz 做相同工作量，但省下 N-1 次 per-page PyO3 dispatch +
+    Python 对象构造，是 ritz 针对小文档场景的优化路径。
+    """
+    import ritz
+    t0 = time.perf_counter()
+    try:
+        d = ritz.open(str(path))
+        # get_text_batch 默认 mode='text'，返回 list[str]
+        texts = d.get_text_batch()
+        total_len = sum(len(t) for t in texts)
+        elapsed = time.perf_counter() - t0
+        if elapsed > timeout:
+            return (elapsed, "timeout", 0)
+        return (elapsed, "pass", total_len)
+    except Exception:
+        elapsed = time.perf_counter() - t0
+        return (elapsed, "fail" if elapsed < timeout else "timeout", 0)
+
+
 def extract_pymupdf(path, timeout=TIMEOUT_S):
     import fitz
     t0 = time.perf_counter()
@@ -153,7 +175,7 @@ def summarize(results):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--max", type=int, default=None, help="只跑前 N 个 PDF（调试）")
-    parser.add_argument("--libs", default="ritz,pymupdf", help="逗号分隔")
+    parser.add_argument("--libs", default="ritz,ritz_batch,pymupdf", help="逗号分隔")
     parser.add_argument("--no-download", action="store_true", help="跳过 corpus 下载")
     args = parser.parse_args()
 
