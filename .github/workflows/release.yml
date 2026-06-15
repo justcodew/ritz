@@ -22,9 +22,10 @@ jobs:
           # Linux x86_64（manylinux auto 自动选最新 manylinux 镜像）
           - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, manylinux: auto }
           # macOS arm64（Apple Silicon runner）
+          # 注：macos-13 (Intel runner) 经常短缺导致 publish job 永远卡在 queued，
+          # 已移除。Intel macOS 用户暂时不可用（Intel Mac 已停产）。后续如需 x86_64
+          # 支持，考虑 universal2 wheel 或 macos-14 cross-compile。
           - { os: macos-14,      target: aarch64-apple-darwin,     manylinux: '' }
-          # macOS x86_64（Intel runner）
-          - { os: macos-13,      target: x86_64-apple-darwin,      manylinux: '' }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

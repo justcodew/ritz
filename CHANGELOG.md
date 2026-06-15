@@ -30,6 +30,25 @@
 
 ---
 
+## [0.4.1] - 2026-06-15
+
+### Fixed
+
+- **release.yml 移除 macos-13 (Intel runner)**：GitHub Actions 的 Intel macOS runner
+  经常短缺，导致 `build wheel (x86_64-apple-darwin)` job 永远卡在 queued，
+  `publish` job (`needs: build`) 因此从未触发——这是 v0.3.0 / v0.3.1 / v0.4.0
+  从未真正发布到 PyPI 的根因。本次仅保留 Linux x86_64 + macOS arm64 两个目标，
+  Intel macOS 用户暂时不可用（Intel Mac 已停产，占比极低）。后续如需 x86_64 支持，
+  考虑 universal2 wheel 或 macos-14 cross-compile。
+
+### Note
+
+本版本是 v0.4.0 的"再发布"——v0.4.0 tag 已 push 但 publish 被 runner 短缺卡死，
+PyPI 上从不存在 0.4.0。版本号 bump 到 0.4.1 以避免与可能的部分上传冲突。
+代码层面 v0.4.1 = v0.4.0（无功能改动）。
+
+---
+
 ## [0.4.0] - 2026-06-15
 
 Phase 6：文本提取热路径性能优化。针对 corpus benchmark 显示的 ritz vs PyMuPDF
