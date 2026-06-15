@@ -35,7 +35,21 @@
 
 ## 安装
 
-### 1. 系统依赖
+### 从 PyPI 安装（推荐）
+
+```bash
+pip install ritz-tool
+```
+
+> 包名是 `ritz-tool`（PyPI 上 `ritz` 已被占用），但 import 名仍然是 `ritz`：
+> ```python
+> import ritz
+> doc = ritz.open("paper.pdf")
+> ```
+
+### 从源码构建
+
+#### 1. 系统依赖
 
 ```bash
 # macOS

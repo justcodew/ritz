@@ -3,7 +3,9 @@ requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "ritz"
+# distribution name on PyPI: ritz-tool（"ritz" 已被占）
+# import name 仍然是 ritz（见 module-name）
+name = "ritz-tool"
 description = "fitz, reforged in Rust — 高性能 PDF 处理库"
 readme = "README.md"
 requires-python = ">=3.8"
