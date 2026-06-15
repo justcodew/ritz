@@ -124,8 +124,18 @@ fn build_mupdf(mupdf_dir: &std::path::Path) -> PathBuf {
         .arg("HAVE_X11=no")
         .arg("HAVE_CURL=no")
         .arg("HAVE_LEPTONICA=no")
-        .arg("HAVE_TESSERACT=no")
-        .arg("libs"); // 只编译库，不编译 mudraw/mutool 等可执行文件
+        .arg("HAVE_TESSERACT=no");
+
+    // Linux：MuPDF 静态库最终被链接到 Python cdylib（_ritz.so，共享库），
+    // 共享库要求所有 .o 都是位置无关代码（PIC），否则链接器报
+    // "relocation R_X86_64_32 cannot be used against local symbol"。
+    // macOS 默认 PIC（Darwin ABI 强制），Windows 走 COFF 不需要 PIC。
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if target_os == "linux" {
+        make.env("XCFLAGS", "-fPIC");
+    }
+
+    make.arg("libs"); // 只编译库，不编译 mudraw/mutool 等可执行文件
 
     let status = make
         .status()

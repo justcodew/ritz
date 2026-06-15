@@ -28,7 +28,20 @@
 
 - `Fixed`: 修 `get_pixmap` matrix 折叠 bug（静默丢弃 rotation/translate）
 
-发版时机：上述落地后发 `0.3.1`。
+---
+
+## [0.3.1] - 2026-06-15
+
+### Fixed
+
+- **Linux build 修复**：`crates/mupdf-sys/build.rs` 在 `target_os = "linux"` 时给 MuPDF `make` 传 `XCFLAGS=-fPIC`。
+  - 根因：MuPDF 静态库被链接到 Python cdylib（共享库 `_ritz.so`），Linux x86_64 要求所有 `.o` 是 PIC，否则报 `relocation R_X86_64_32 cannot be used against local symbol; recompile with -fPIC`。
+  - macOS 默认 PIC（Darwin ABI），Windows 用 COFF，都不受影响，所以 Phase 5e 在 macOS 上 75 个 pytest 全绿但 Linux CI build 失败。
+  - 修复后首次成功发布 Linux x86_64 manylinux wheel 到 PyPI。
+
+### Changed
+
+- 包发布名从 `ritz` 改为 `ritz-tool`（PyPI 上 `ritz` 已被占用）。import 名不变（仍是 `import ritz`）。
 
 ---
 
