@@ -6,6 +6,7 @@ name: release
 on:
   push:
     tags: ['v*']
+    branches: [test-release]
 
 # 同 tag 重推时取消旧 run
 concurrency:
@@ -67,7 +68,8 @@ jobs:
         shell: pwsh
         run: |
           # 只构建 libmupdf + libthirdparty（Release|x64），跳过 mudraw/mutool 等可执行文件
-          msbuild vendor/mupdf/platform/win32/mupdf.sln /t:libmupdf;libthirdparty `
+          msbuild vendor/mupdf/platform/win32/mupdf.sln `
+            /t:libmupdf`;libthirdparty `
             /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /m
 
       - name: Build wheel
