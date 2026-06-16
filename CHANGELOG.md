@@ -28,6 +28,27 @@
 
 - `Fixed`: 修 `get_pixmap` matrix 折叠 bug（静默丢弃 rotation/translate）
 
+### Added — 扩展 PyPI 平台覆盖
+
+补全 macOS Intel、Windows x86_64、Linux arm64 manylinux 兼容，实现全平台覆盖：
+
+- **macOS x86_64**：从 macos-14 (Apple Silicon) 交叉编译，修复 build.rs 仅设 ARCHFLAGS 不生效的问题，
+  改为设 `CC="clang -arch x86_64"` + `LD="clang -arch x86_64"`。
+- **Windows x86_64**：build.rs 加 Windows 分支，CI 中用 MSBuild 编译 MuPDF（`platform/win32/mupdf.sln`），
+  build.rs 读取预编译的 `.lib`。link_mupdf 适配 `libthirdparty.lib` 命名。
+- **Linux arm64 manylinux**：改用 `manylinux: '2_28'` + `before-script-linux` 在容器内安装 git/make，
+  产出 `manylinux_2_28_aarch64` wheel（glibc 2.28+），替代之前的 `linux_aarch64`（需 glibc 2.39+）。
+
+### 覆盖矩阵（更新后）
+
+| 平台 | Python | wheel |
+|------|--------|-------|
+| macOS arm64 | 3.9-3.13 | `cp39-abi3-macosx_11_0_arm64.whl` |
+| macOS x86_64 | 3.9-3.13 | `cp39-abi3-macosx_10_12_x86_64.whl` |
+| Linux x86_64 | 3.9-3.13 | `cp39-abi3-manylinux_2_17_x86_64.whl` |
+| Linux aarch64 | 3.9-3.13 | `cp39-abi3-manylinux_2_28_aarch64.whl` |
+| Windows x86_64 | 3.9-3.13 | `cp39-abi3-win_amd64.whl` |
+
 ---
 
 ## [0.4.4] - 2026-06-15

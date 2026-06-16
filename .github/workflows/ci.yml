@@ -14,6 +14,7 @@ jobs:
         include:
           - { os: ubuntu-latest, python: '3.12' }
           - { os: macos-14,      python: '3.12' }
+          - { os: windows-latest, python: '3.12' }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -31,6 +32,13 @@ jobs:
         run: |
           xcode-select -p || xcode-select --install || true
           brew install make || true
+
+      - name: Build MuPDF (MSBuild, Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          msbuild vendor/mupdf/platform/win32/mupdf.sln /t:libmupdf;libthirdparty `
+            /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /m
 
       - uses: actions/setup-python@v5
         with:

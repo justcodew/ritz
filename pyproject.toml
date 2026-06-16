@@ -29,6 +29,7 @@ classifiers = [
     "Topic :: Text Processing",
     "Operating System :: POSIX :: Linux",
     "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
 ]
 
 [project.urls]

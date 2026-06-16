@@ -110,6 +110,23 @@ fn build_mupdf(mupdf_dir: &std::path::Path) -> PathBuf {
     let jobs = env::var("NUM_JOBS").unwrap_or_else(|_| "4".to_string());
     let build_dir = mupdf_dir.join("build/release");
 
+    // Windows：MSBuild 由 CI workflow 预先调用，build.rs 只读取预编译的 .lib。
+    // 本地开发时也需先手动运行 MSBuild。
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if target_os == "windows" {
+        let win_build_dir = mupdf_dir.join("platform/win32/x64/Release");
+        if !win_build_dir.join("libmupdf.lib").exists() {
+            panic!(
+                "MuPDF Windows .lib 未找到: {}\n\
+                 请先运行 MSBuild:\n  \
+                 msbuild platform/win32/mupdf.sln /t:libmupdf;libthirdparty \
+                 /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143",
+                win_build_dir.display()
+            );
+        }
+        return win_build_dir;
+    }
+
     // 幂等：仅在 libmupdf.a 不存在时编译
     let lib = build_dir.join("libmupdf.a");
     if lib.exists() {
@@ -146,8 +163,11 @@ fn build_mupdf(mupdf_dir: &std::path::Path) -> PathBuf {
             make.env("LD", "aarch64-linux-gnu-ld");
             make.env("AR", "aarch64-linux-gnu-ar");
         }
-        // macOS x86_64 cross from arm64（备用方案，当前用 native macos-13 不触发）
+        // macOS x86_64 cross from arm64：clang 是 universal compiler，
+        // 通过 -arch 标志可原生交叉编译，无需额外工具链。
         else if target == "x86_64-apple-darwin" && host.starts_with("aarch64") {
+            make.env("CC", "clang -arch x86_64");
+            make.env("LD", "clang -arch x86_64");
             make.env("ARCHFLAGS", "-arch x86_64");
         }
     }
@@ -171,10 +191,13 @@ fn link_mupdf(release_dir: &std::path::Path) {
     // 链接顺序重要：mupdf 依赖 mupdf-third
     println!("cargo:rustc-link-lib=static=mupdf");
 
-    // MuPDF 1.24+ 将第三方库聚合为 libmupdf-third.a
-    let third = release_dir.join("libmupdf-third.a");
-    if third.exists() {
+    // MuPDF 1.24+ 将第三方库聚合为 libmupdf-third.a（Unix）或 libthirdparty.lib（Windows MSBuild）
+    let third_a = release_dir.join("libmupdf-third.a");
+    let third_lib = release_dir.join("libthirdparty.lib");
+    if third_a.exists() {
         println!("cargo:rustc-link-lib=static=mupdf-third");
+    } else if third_lib.exists() {
+        println!("cargo:rustc-link-lib=static=thirdparty");
     } else {
         // 旧版本需单独链接
         println!("cargo:rustc-link-lib=static=freetype");

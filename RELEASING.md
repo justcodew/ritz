@@ -140,16 +140,16 @@ PyPI 不允许重新上传同版本号。如果发布有严重 bug：
 
 ## 平台覆盖矩阵
 
-当前发版的平台（在 `release.yml` matrix 中定义）：
+当前发版的平台（在 `release.yml` matrix 中定义）。使用 abi3 wheel（`cp39-abi3`），
+单个 wheel 覆盖 Python 3.9-3.13，无需按 Python 版本分别构建。
 
 | 平台 | wheel 名 | 状态 |
 |------|---------|------|
-| Linux x86_64 | `ritz-X.Y.Z-cp312-cp312-manylinux_*_x86_64.whl` | ✅ |
-| macOS arm64 | `ritz-X.Y.Z-cp312-cp312-macosx_*_arm64.whl` | ✅ |
-| macOS x86_64 | `ritz-X.Y.Z-cp312-cp312-macosx_*_x86_64.whl` | ✅ |
-| Linux aarch64 | — | 待加（需 cross compile 或原生 runner） |
-| Windows x86_64 | — | 待加（MuPDF 在 Windows 的编译需要额外 patches） |
-| Python 3.8–3.11 | — | maturin 默认只编 setup-python 的版本，要加 matrix |
+| Linux x86_64 | `ritz-X.Y.Z-cp39-abi3-manylinux_2_17_x86_64.whl` | ✅ |
+| Linux aarch64 | `ritz-X.Y.Z-cp39-abi3-manylinux_2_28_aarch64.whl` | ✅ |
+| macOS arm64 | `ritz-X.Y.Z-cp39-abi3-macosx_11_0_arm64.whl` | ✅ |
+| macOS x86_64 | `ritz-X.Y.Z-cp39-abi3-macosx_10_12_x86_64.whl` | ✅（从 arm64 交叉编译） |
+| Windows x86_64 | `ritz-X.Y.Z-cp39-abi3-win_amd64.whl` | ✅（MSBuild 编译 MuPDF） |
 
 ## 常见问题
 
