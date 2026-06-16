@@ -33,13 +33,6 @@ jobs:
           xcode-select -p || xcode-select --install || true
           brew install make || true
 
-      - name: Build MuPDF (MSBuild, Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          msbuild vendor/mupdf/platform/win32/mupdf.sln /t:libmupdf;libthirdparty `
-            /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /m
-
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
@@ -59,8 +52,17 @@ jobs:
       - name: Install Python test deps
         run: pip install maturin pytest pymupdf
 
+      # Windows：MSBuild 编译 MuPDF，build.rs 读取预编译的 .lib
+      - name: Build MuPDF (MSBuild, Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          msbuild vendor/mupdf/platform/win32/mupdf.sln `
+            /t:libmupdf`;libthirdparty `
+            /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /m
+
       - name: Build (maturin develop)
-        run: maturin develop --release
+        run: maturin develop --release -vv
 
       - name: Python tests
         run: pytest python/tests/ -q
