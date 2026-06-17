@@ -1,6 +1,7 @@
 name: release
 
 # tag 推送 v* 时触发：构建多平台 wheel 并发布到 PyPI。
+# test-release 分支推送时触发 TestPyPI 发布。
 # 完整流程见 RELEASING.md。
 
 on:
@@ -16,8 +17,7 @@ concurrency:
 jobs:
   build:
     name: build wheel (${{ matrix.target }})
-    # continue-on-error：单个 matrix 项失败（如 macos-13 runner 短缺超时）
-    # 不阻塞其他平台 wheel 上传。publish 用 if: always() 仍会发布成功的 wheel。
+    # continue-on-error：单个 matrix 项失败不阻塞其他平台 wheel 上传。
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -25,12 +25,11 @@ jobs:
         include:
           # Linux x86_64
           - { os: ubuntu-latest,   target: x86_64-unknown-linux-gnu,  manylinux: auto, cross_deps: '' }
-          # Linux arm64（native ARM runner + manylinux_2_28 容器）
-          # before-script-linux 在容器内安装 build.rs 需要的 git 和 make
-          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, manylinux: '2_28', cross_deps: '', before_script: 'yum install -y git make' }
+          # Linux arm64（native ARM runner，manylinux=off 走 native build）
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, manylinux: 'off', cross_deps: '' }
           # macOS arm64（Apple Silicon runner）
           - { os: macos-14,        target: aarch64-apple-darwin,      manylinux: '',   cross_deps: '' }
-          # macOS x86_64（从 Apple Silicon 交叉编译，避免 macos-13 runner 短缺问题）
+          # macOS x86_64（从 Apple Silicon 交叉编译）
           - { os: macos-14,        target: x86_64-apple-darwin,       manylinux: '',   cross_deps: '' }
           # Windows x86_64（MSBuild 编译 MuPDF）
           - { os: windows-latest,  target: x86_64-pc-windows-msvc,    manylinux: '',   cross_deps: '' }
@@ -63,14 +62,14 @@ jobs:
           key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-${{ matrix.target }}-cargo-
 
+      # Windows：用 MSBuild 编译 MuPDF 静态库（libmupdf + libthirdparty）
+      # PowerShell 中分号是语句分隔符，用 backtick 转义
       - name: Build MuPDF (MSBuild, Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          # 只构建 libmupdf + libthirdparty（Release|x64），跳过 mudraw/mutool 等可执行文件
-          msbuild vendor/mupdf/platform/win32/mupdf.sln `
-            /t:libmupdf`;libthirdparty `
-            /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /m
+          $targets = "libmupdf;libthirdparty"
+          msbuild vendor/mupdf/platform/win32/mupdf.sln /t:$targets /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /m
 
       - name: Build wheel
         uses: PyO3/maturin-action@v1
@@ -79,7 +78,6 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --out dist
           manylinux: ${{ matrix.manylinux || 'auto' }}
-          before-script-linux: ${{ matrix.before_script || '' }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -87,16 +85,17 @@ jobs:
           name: wheel-${{ matrix.target }}
           path: dist/
 
-  # 可选：在 merge 到 test-release 分支时触发 TestPyPI 发布。
-  # 用法见 RELEASING.md。使用 OIDC 可信发布，无需 API token secret。
+  # TestPyPI 发布：仅在 test-release 分支推送时触发。
+  # 注意：PyPI Trusted Publisher 需要配置 workflow=release.yml, environment=testpypi,
+  # 且 "Allowed publishers" 的 workflow_ref 需匹配 refs/heads/test-release（不是 tag）。
   testpypi:
     name: publish to TestPyPI
-    if: github.event_name == 'push' && github.ref == 'refs/heads/test-release'
+    if: github.ref == 'refs/heads/test-release'
     needs: build
     runs-on: ubuntu-latest
     environment: testpypi
     permissions:
-      id-token: write  # OIDC trusted publishing
+      id-token: write
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -107,17 +106,15 @@ jobs:
           repository-url: https://test.pypi.org/legacy/
           skip-existing: true
 
+  # PyPI 正式发布：仅在 tag push 时触发。
   publish:
     name: publish to PyPI
-    # if: always() 让 publish 即使部分 build 失败/queued 也跑；
-    # 下载 artifact 时只拿到成功的 wheel（失败的 matrix 项不上传 artifact）。
-    # skip-existing: true 防止重复上传冲突。
     if: startsWith(github.ref, 'refs/tags/v') && always()
     needs: build
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
-      id-token: write  # OIDC trusted publishing
+      id-token: write
     steps:
       - uses: actions/download-artifact@v4
         with:
