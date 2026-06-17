@@ -57,9 +57,8 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          msbuild vendor/mupdf/platform/win32/mupdf.sln `
-            /t:libmupdf`;libthirdparty `
-            /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /m
+          $targets = "libmupdf;libthirdparty"
+          msbuild vendor/mupdf/platform/win32/mupdf.sln /t:$targets /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /m
 
       - name: Build (maturin develop)
         run: maturin develop --release -vv
